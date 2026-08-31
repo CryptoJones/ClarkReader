@@ -1,4 +1,7 @@
-import { DEFAULTS, getSettings } from "./config.js";
+// Chrome loads this as a classic service worker and pulls its dependencies in with
+// importScripts. Firefox lists them ahead of this file in manifest.background.scripts,
+// so they are already in scope and importScripts does not exist.
+if (typeof importScripts === "function") importScripts("api.js", "config.js");
 
 const MENU_ID = "clarkreader-read-selection";
 
@@ -6,33 +9,36 @@ const MENU_ID = "clarkreader-read-selection";
 // command needs to know is mirrored into session storage rather than kept only here.
 let state = { tabId: null, jobId: null, index: 0, count: 0, playing: false };
 
+// Firefox only: with no offscreen document, the player runs right here.
+let localPlayer = null;
+
 async function loadState() {
-  const { crState } = await chrome.storage.session.get("crState");
+  const { crState } = await api.storage.session.get("crState");
   if (crState) state = crState;
   return state;
 }
 async function saveState(patch) {
   state = { ...state, ...patch };
-  await chrome.storage.session.set({ crState: state });
+  await api.storage.session.set({ crState: state });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
+api.runtime.onInstalled.addListener(() => {
+  api.contextMenus.create({
     id: MENU_ID,
     title: "Read aloud with Emma",
     contexts: ["selection"],
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+api.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === MENU_ID && tab?.id != null) {
-    // info.selectionText is truncated by Chrome, so it is only the fallback.
+    // info.selectionText is truncated by the browser, so it is only the fallback.
     readSelection(tab.id, info.selectionText);
   }
 });
 
-chrome.commands.onCommand.addListener(async (command) => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+api.commands.onCommand.addListener(async (command) => {
+  const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   if (command === "read-selection" && tab?.id != null) return readSelection(tab.id);
   if (command === "toggle-pause") return control("toggle");
   if (command === "stop-reading") return control("stop");
@@ -43,11 +49,11 @@ chrome.commands.onCommand.addListener(async (command) => {
 /** Inject the overlay script once per page. Re-injection is guarded inside it. */
 async function ensureContent(tabId) {
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    await api.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
     return true;
   } catch (err) {
-    // chrome:// pages, the Web Store, and PDFs refuse injection. Reading still works;
-    // there is just nowhere to draw the player.
+    // Browser-internal pages, extension galleries and PDFs refuse injection. Reading
+    // still works; there is just nowhere to draw the player.
     console.warn("ClarkReader: no overlay on this page —", err.message);
     return false;
   }
@@ -56,7 +62,7 @@ async function ensureContent(tabId) {
 /** Read the live selection out of the page, including inside frames. */
 async function getSelectionText(tabId) {
   try {
-    const results = await chrome.scripting.executeScript({
+    const results = await api.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: () => (window.getSelection()?.toString() ?? "").trim(),
     });
@@ -69,31 +75,41 @@ async function getSelectionText(tabId) {
 
 async function toTab(tabId, msg) {
   try {
-    await chrome.tabs.sendMessage(tabId, msg);
+    await api.tabs.sendMessage(tabId, msg);
   } catch {
     /* overlay not present on this page; nothing to update */
   }
 }
 
-// ------------------------------------------------------------------- offscreen
+// ---------------------------------------------------------------------- playback
 
-// MV3 service workers have no DOM and cannot play audio, so playback lives in an
-// offscreen document that the worker drives by message.
+// Chrome: an offscreen document, because a service worker has no DOM.
+// Firefox: the background page itself, which does.
 async function ensureOffscreen() {
-  const existing = await chrome.runtime.getContexts({
+  const existing = await api.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
   });
   if (existing.length) return;
-  await chrome.offscreen.createDocument({
+  await api.offscreen.createDocument({
     url: "offscreen.html",
     reasons: ["AUDIO_PLAYBACK"],
     justification: "Plays locally synthesized speech for the selected text.",
   });
 }
 
-async function toOffscreen(msg) {
-  await ensureOffscreen();
-  return chrome.runtime.sendMessage({ ...msg, target: "offscreen" });
+function getLocalPlayer() {
+  if (!localPlayer) localPlayer = new ClarkPlayer((msg) => handleReport(msg));
+  return localPlayer;
+}
+
+async function toPlayer(msg) {
+  if (HAS_OFFSCREEN) {
+    await ensureOffscreen();
+    return api.runtime.sendMessage({ ...msg, target: "offscreen" });
+  }
+  const player = getLocalPlayer();
+  if (msg.type === "play") return player.start(msg.server, msg.job);
+  if (msg.type === "control") return player.control(msg.action);
 }
 
 // ---------------------------------------------------------------------- reading
@@ -121,18 +137,20 @@ async function readSelection(tabId, fallbackText) {
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     job = await res.json();
   } catch (err) {
+    // A blocked host permission and a stopped server both surface as a TypeError, and
+    // on Firefox the permission is the likelier of the two.
     const offline = err instanceof TypeError;
     await toTab(tabId, {
       type: "cr-error",
       message: offline
-        ? "ClarkReader server is not running. Start it with server/run.sh"
+        ? "Cannot reach the ClarkReader server. Start it with server/run.sh, and on Firefox allow access to 127.0.0.1 from the toolbar popup."
         : `Could not prepare audio: ${err.message}`,
     });
     return;
   }
 
   await saveState({ jobId: job.id, count: job.count, index: 0, playing: true });
-  await toOffscreen({ type: "play", server: settings.server, job });
+  await toPlayer({ type: "play", server: settings.server, job });
   if (hasOverlay) {
     await toTab(tabId, {
       type: "cr-start",
@@ -145,47 +163,46 @@ async function readSelection(tabId, fallbackText) {
 
 async function control(action) {
   await loadState();
-  if (!state.jobId) return;
-  await toOffscreen({ type: "control", action });
+  if (!state.jobId && HAS_OFFSCREEN) return;
+  await toPlayer({ type: "control", action });
 }
 
 // ---------------------------------------------------------------------- routing
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.target === "offscreen") return; // not ours
+/** Player progress, however it arrived — by message from Chrome's offscreen document
+ *  or by direct callback from Firefox's in-process player. */
+async function handleReport(msg) {
+  if (msg.type === "cr-progress") {
+    await loadState();
+    await saveState({ index: msg.index, playing: msg.state === "playing" });
+    if (state.tabId != null) await toTab(state.tabId, msg);
+    return;
+  }
+  if (msg.type === "cr-ended" || msg.type === "cr-stopped") {
+    await loadState();
+    const tabId = state.tabId;
+    await saveState({ jobId: null, playing: false, index: 0, count: 0 });
+    if (tabId != null) await toTab(tabId, { type: "cr-ended" });
+    return;
+  }
+  if (msg.type === "cr-playback-error") {
+    await loadState();
+    if (state.tabId != null) {
+      await toTab(state.tabId, { type: "cr-error", message: msg.message });
+    }
+  }
+}
+
+api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.target === "offscreen") return; // bound for the player, not for us
 
   if (msg?.type === "cr-control") {
     control(msg.action);
     return;
   }
 
-  // Progress reports coming back from the offscreen player.
-  if (msg?.type === "cr-progress") {
-    (async () => {
-      await loadState();
-      await saveState({ index: msg.index, playing: msg.state === "playing" });
-      if (state.tabId != null) await toTab(state.tabId, msg);
-    })();
-    return;
-  }
-
-  if (msg?.type === "cr-ended" || msg?.type === "cr-stopped") {
-    (async () => {
-      await loadState();
-      const tabId = state.tabId;
-      await saveState({ jobId: null, playing: false, index: 0, count: 0 });
-      if (tabId != null) await toTab(tabId, { type: "cr-ended" });
-    })();
-    return;
-  }
-
-  if (msg?.type === "cr-playback-error") {
-    (async () => {
-      await loadState();
-      if (state.tabId != null) {
-        await toTab(state.tabId, { type: "cr-error", message: msg.message });
-      }
-    })();
+  if (msg?.type?.startsWith("cr-") && msg.type !== "cr-query" && msg.type !== "cr-read-active") {
+    handleReport(msg);
     return;
   }
 
@@ -198,12 +215,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // The popup can start a read on the active tab.
   if (msg?.type === "cr-read-active") {
     (async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const [tab] = await api.tabs.query({ active: true, currentWindow: true });
       if (tab?.id != null) await readSelection(tab.id);
       sendResponse({ ok: true });
     })();
     return true;
   }
 });
-
-export { DEFAULTS };

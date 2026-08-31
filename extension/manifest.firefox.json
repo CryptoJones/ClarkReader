@@ -7,8 +7,7 @@
     "contextMenus",
     "storage",
     "scripting",
-    "activeTab",
-    "offscreen"
+    "activeTab"
   ],
   "host_permissions": [
     "http://127.0.0.1:8756/*"
@@ -43,6 +42,22 @@
     }
   },
   "background": {
-    "service_worker": "background.js"
+    "scripts": [
+      "api.js",
+      "config.js",
+      "player.js",
+      "background.js"
+    ]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "clarkreader@thenetwerk.net",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
   }
 }

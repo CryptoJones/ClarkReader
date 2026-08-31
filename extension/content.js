@@ -7,6 +7,12 @@
 if (!window.__clarkReaderInjected) {
   window.__clarkReaderInjected = true;
 
+  // Injected standalone, so it carries its own copy of the namespace shim rather than
+  // depending on api.js being loaded alongside it. It has to live INSIDE the guard:
+  // executeScript re-runs this file in the same isolated world every time, and a
+  // top-level `const` would throw "already been declared" on the second read.
+  const api = globalThis.browser ?? globalThis.chrome;
+
   const HIDE_AFTER_MS = 2500;
 
   // Everything lives behind a shadow root: the host page cannot restyle the player,
@@ -108,13 +114,13 @@ if (!window.__clarkReaderInjected) {
     for (const b of [el.prev, el.next, el.toggle, el.stop]) b.disabled = !on;
   }
 
-  const send = (action) => chrome.runtime.sendMessage({ type: "cr-control", action });
+  const send = (action) => api.runtime.sendMessage({ type: "cr-control", action });
   el.prev.addEventListener("click", () => send("prev"));
   el.next.addEventListener("click", () => send("next"));
   el.stop.addEventListener("click", () => send("stop"));
   el.toggle.addEventListener("click", () => send("toggle"));
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  api.runtime.onMessage.addListener((msg) => {
     if (!msg?.type?.startsWith("cr-")) return;
 
     if (msg.type === "cr-status" && msg.state === "preparing") {

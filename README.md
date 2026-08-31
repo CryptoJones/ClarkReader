@@ -25,8 +25,8 @@ Two pieces, because the model costs ~7 s to load and ~0.08 s to run:
 
 - **`server/`** — a warm local Kokoro process on `127.0.0.1:8756`. It holds the model in
   memory so a selection never pays the load cost.
-- **`extension/`** — a Chrome MV3 extension that captures the selection, asks the server
-  for audio a sentence at a time, and plays it with an on-page player.
+- **`extension/`** — an MV3 extension (Chrome and Firefox) that captures the selection,
+  asks the server for audio a sentence at a time, and plays it with an on-page player.
 
 Splitting into sentences is what makes it feel instant: playback starts after the *first*
 sentence is synthesized rather than the last, and the next one is always decoded and
@@ -66,9 +66,21 @@ systemctl --user daemon-reload && systemctl --user enable --now clarkreader
 
 ### 2. The extension
 
-1. Open `chrome://extensions`
-2. Turn on **Developer mode**
-3. **Load unpacked** → select the `extension/` directory
+```bash
+./build.sh          # -> dist/chrome and dist/firefox
+```
+
+**Chrome** — `chrome://extensions` → **Developer mode** → **Load unpacked** → `dist/chrome`
+
+**Firefox** — `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** →
+pick `dist/firefox/manifest.json`. Firefox treats MV3 host permissions as opt-in, so the
+first time, open the toolbar popup and click **Allow access to the server**.
+
+The two builds differ only in the manifest. Chrome's background is a service worker with
+no DOM, so playback goes in an offscreen document; Firefox's background is an event page
+that has one, so the same player class runs directly in it. That is also why nothing here
+is an ES module — classic scripts are the one form both background contexts accept without
+a bundler.
 
 ## Use
 
@@ -129,7 +141,8 @@ encoder tops out around 510 phonemes.
 - Once the model and the chosen voice are in the Hugging Face cache, the server sets
   `HF_HUB_OFFLINE=1` for itself and makes no network calls at all — not even the hub's
   update check. A first run still downloads the weights.
-- Chrome refuses script injection on `chrome://` pages and the Web Store, so the on-page
-  player cannot appear there.
-- Firefox would need the playback moved out of `offscreen.html`, which is Chrome-only, into
-  a background page — the server and the rest of the extension are unchanged.
+- Browsers refuse script injection on their own internal pages (`chrome://`, `about:`) and
+  on extension galleries, so the on-page player cannot appear there. Reading still works.
+- The Firefox build sets a floor of Firefox 142, which is where
+  `data_collection_permissions` landed. It declares `"none"`, which is accurate: nothing is
+  collected and nothing is transmitted.
