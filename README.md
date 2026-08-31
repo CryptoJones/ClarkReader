@@ -126,6 +126,9 @@ encoder tops out around 510 phonemes.
 
 - The server binds to loopback and has no authentication. It holds nothing secret, but it
   will synthesize speech for anything on this machine that can reach the port.
+- Once the model and the chosen voice are in the Hugging Face cache, the server sets
+  `HF_HUB_OFFLINE=1` for itself and makes no network calls at all — not even the hub's
+  update check. A first run still downloads the weights.
 - Chrome refuses script injection on `chrome://` pages and the Web Store, so the on-page
   player cannot appear there.
 - Firefox would need the playback moved out of `offscreen.html`, which is Chrome-only, into
