@@ -386,6 +386,27 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+def prefer_offline(voice: str) -> bool:
+    """Skip Hugging Face's update check when the weights are already on disk.
+
+    kokoro resolves the model through the hub on every start, which is a network
+    round-trip in the startup path and a request leaving the machine for a tool whose
+    whole point is that nothing does. Going offline is only safe once the model AND the
+    voice are cached, so this checks for both rather than setting the flag blindly and
+    breaking a first run that still needs the download.
+    """
+    import glob
+    if os.environ.get("HF_HUB_OFFLINE"):
+        return True
+    hub = os.path.expanduser("~/.cache/huggingface/hub/models--hexgrad--Kokoro-82M/snapshots")
+    have_model = glob.glob(os.path.join(hub, "*", "kokoro-v1_0.pth"))
+    have_voice = glob.glob(os.path.join(hub, "*", "voices", f"{voice}.pt"))
+    if have_model and have_voice:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        return True
+    return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Local Kokoro TTS server for ClarkReader")
     ap.add_argument("--host", default="127.0.0.1")
@@ -399,6 +420,9 @@ def main() -> None:
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+
+    if prefer_offline(args.voice):
+        log.info("model and voice are cached - running fully offline")
 
     engine = Engine()
     if args.voice not in engine.voices:
