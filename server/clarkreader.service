@@ -1,0 +1,21 @@
+# Optional: run ClarkReader's TTS server as a user service so the model is warm
+# before the first selection.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp server/clarkreader.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now clarkreader
+#
+[Unit]
+Description=ClarkReader local Kokoro TTS server
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/Source/repos/ClarkReader/server/run.sh
+Restart=on-failure
+RestartSec=3
+# Loopback only; the server holds no secrets but also has no auth.
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

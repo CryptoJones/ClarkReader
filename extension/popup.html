@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ClarkReader</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    width: 280px; margin: 0; padding: 14px;
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #16181d; color: #e8e8ea;
+  }
+  h1 { font-size: 14px; margin: 0 0 2px; }
+  .status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #8b90a0; margin-bottom: 14px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #555b68; flex: none; }
+  .dot.ok { background: #3ddc84; } .dot.bad { background: #e05d5d; }
+  label { display: block; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: #8b90a0; margin: 12px 0 5px; }
+  select, input[type=text] {
+    width: 100%; box-sizing: border-box; background: #23262e; color: #e8e8ea;
+    border: 1px solid #333741; border-radius: 7px; padding: 6px 8px; font: inherit;
+  }
+  .speed { display: flex; align-items: center; gap: 9px; }
+  input[type=range] { flex: 1; accent-color: #2f6fed; }
+  .val { font-variant-numeric: tabular-nums; width: 30px; text-align: right; color: #cfd2da; }
+  button {
+    width: 100%; margin-top: 16px; cursor: pointer;
+    background: #2f6fed; color: #fff; border: 0; border-radius: 7px;
+    padding: 9px 0; font: 500 13px/1 inherit;
+  }
+  button:hover { background: #3d7bf5; }
+  button:disabled { opacity: .45; cursor: default; }
+  .keys { margin-top: 14px; font-size: 11px; color: #6f7484; line-height: 1.7; }
+  kbd {
+    background: #23262e; border: 1px solid #333741; border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 5px; font: 11px ui-monospace, monospace; color: #cfd2da;
+  }
+</style>
+<h1>ClarkReader</h1>
+<div class="status"><span class="dot" id="dot"></span><span id="statusText">checking server…</span></div>
+
+<label for="voice">Voice</label>
+<select id="voice"></select>
+
+<label for="speed">Speed</label>
+<div class="speed">
+  <input type="range" id="speed" min="0.5" max="1.5" step="0.01">
+  <span class="val" id="speedVal"></span>
+</div>
+
+<label for="server">Server</label>
+<input type="text" id="server" spellcheck="false">
+
+<button id="read">Read selection</button>
+
+<div class="keys">
+  <kbd>Alt</kbd>+<kbd>R</kbd> read selection &nbsp;
+  <kbd>Alt</kbd>+<kbd>P</kbd> pause &nbsp;
+  <kbd>Alt</kbd>+<kbd>S</kbd> stop
+</div>
+<script src="popup.js" type="module"></script>

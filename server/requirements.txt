@@ -1,0 +1,5 @@
+# Kokoro pulls torch, which is the bulk of the install. If NarratorTool's venv is
+# already on this machine, run.sh finds it and none of this is needed.
+kokoro>=0.9.4
+torch>=2.0
+numpy>=1.24
