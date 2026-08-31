@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "ClarkReader",
+  "version": "1.0.0",
+  "description": "Reads the text you select aloud in the Emma voice, synthesized locally. No text ever leaves this machine.",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "offscreen",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8756/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ClarkReader"
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "commands": {
+    "read-selection": {
+      "suggested_key": {
+        "default": "Alt+R"
+      },
+      "description": "Read the current selection aloud"
+    },
+    "toggle-pause": {
+      "suggested_key": {
+        "default": "Alt+P"
+      },
+      "description": "Pause or resume reading"
+    },
+    "stop-reading": {
+      "suggested_key": {
+        "default": "Alt+S"
+      },
+      "description": "Stop reading"
+    }
+  }
+}
