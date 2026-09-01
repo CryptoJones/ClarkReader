@@ -134,6 +134,20 @@ splitting:
 Sentences longer than 320 characters are split again at clauses, since Kokoro's text
 encoder tops out around 510 phonemes.
 
+## Tests
+
+```bash
+node --test tests/extension.test.mjs                       # extension wiring
+~/Source/repos/NarratorTool/.venv/bin/python -m pytest tests/   # server text handling
+```
+
+The extension tests execute the real source files in a sandbox with stubbed
+WebExtension APIs, loading them exactly the way each browser's manifest does — Chrome
+through `importScripts`, Firefox through ordered background scripts. That is what
+catches the failures static checks miss: a name that resolves in one browser and not
+the other, and the re-declaration error a re-injected content script throws on the
+*second* read rather than the first.
+
 ## Notes
 
 - The server binds to loopback and has no authentication. It holds nothing secret, but it

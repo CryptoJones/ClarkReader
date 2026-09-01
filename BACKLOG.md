@@ -13,6 +13,7 @@ in sync. Every open item below gets a matching GitHub issue when the repo is pub
 
 ## Done
 
+- [x] **Test suites for both halves** — _test_ — 7 extension tests executing the real sources against stubbed WebExtension APIs, 21 server tests over normalization and splitting. Mutation-checked: reintroducing the content-script redeclaration bug and scrambling the Firefox script order each fail exactly one test. Found and fixed a dropped sentence period on "etc.".
 - [x] **Firefox build** — _feat_ — shared `ClarkPlayer` runs in Chrome's offscreen document or Firefox's background page, selected by feature detection; two manifests assembled by `build.sh`. `web-ext lint` clean. Not yet exercised in a live Firefox — `web-ext run` could not reach the remote debugging port on this box.
 - [x] **v1.0 — selection to speech, end to end** — _feat_ — warm Kokoro server (`/prepare` + `/chunk`) with sentence-level streaming, MV3 extension with context menu, three shortcuts, on-page player, and a settings popup. 92 ms to first audio.
 
