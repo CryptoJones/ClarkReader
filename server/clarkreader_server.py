@@ -57,7 +57,11 @@ log = logging.getLogger("clarkreader")
 _EXPANSIONS = [
     (r"\be\.g\.", "for example"),
     (r"\bi\.e\.", "that is"),
-    (r"\betc\.", "et cetera"),
+    # "etc." is the one expansion that routinely ENDS a sentence, so it has to keep a
+    # terminal period the way an initialism does. The others cannot have the same
+    # treatment: they are followed by their object, and "vs. Chiba" would turn into
+    # "versus. Chiba".
+    (r"\betc\.", lambda m: "et cetera" + _keeps_period(m)),
     (r"\bvs\.?(?=\s)", "versus"),
     (r"\bDr\.", "Doctor"),
     (r"\bProf\.", "Professor"),
