@@ -95,7 +95,10 @@ export WEB_EXT_API_SECRET='…'
 
 Open the `.xpi` in Firefox to install it. Every version needs signing again, so this
 is the release step for Firefox; `./sign.sh --listed` submits to the public listing
-instead. The credentials are read from the environment by web-ext and never printed.
+instead, taking the license, listing text and reviewer notes from
+`store/amo-metadata.json` (Mozilla requires those for a listed version). Listed
+versions wait for Mozilla's review, so web-ext stops waiting long before the signed
+file exists; the listing page shows the status. The credentials are read from the environment by web-ext and never printed.
 The add-on id in the manifest is bound to the first account that signs it, so use the
 one you mean to publish under.
 
