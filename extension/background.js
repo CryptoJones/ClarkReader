@@ -157,6 +157,7 @@ async function readSelection(tabId, fallbackText) {
       count: job.count,
       chunks: job.chunks,
       voice: job.voice,
+      rsvp: settings.rsvp,
     });
   }
 }

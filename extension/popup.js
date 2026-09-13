@@ -5,6 +5,7 @@
   $("server").value = settings.server;
   $("speed").value = settings.speed;
   $("speedVal").textContent = Number(settings.speed).toFixed(2);
+  $("rsvp").checked = settings.rsvp !== false;
 
   function save(patch) {
     Object.assign(settings, patch);
@@ -80,6 +81,7 @@
   });
 
   $("voice").addEventListener("change", (e) => save({ voice: e.target.value }));
+  $("rsvp").addEventListener("change", (e) => save({ rsvp: e.target.checked }));
   $("speed").addEventListener("input", (e) => {
     $("speedVal").textContent = Number(e.target.value).toFixed(2);
     save({ speed: Number(e.target.value) });

@@ -3,6 +3,13 @@
 // Injected on demand rather than declared over <all_urls>, so ClarkReader has no
 // presence on pages you never ask it to read. executeScript re-runs this file on
 // every invocation, hence the idempotence guard.
+//
+// Besides the transport controls, the card carries an RSVP window (rapid serial
+// visual presentation): each word is shown alone, at a fixed spot, with one letter
+// in red as the anchor for the eye — the Spritz technique. Here it is driven by the
+// audio rather than by a words-per-minute dial: the player reports where each word
+// falls in the chunk being spoken and how far in playback is, and a local animation
+// loop shows whichever word the voice is on.
 
 if (!window.__clarkReaderInjected) {
   window.__clarkReaderInjected = true;
@@ -26,7 +33,7 @@ if (!window.__clarkReaderInjected) {
     <style>
       :host { all: initial; }
       .card {
-        position: fixed; right: 20px; bottom: 20px; width: 320px;
+        position: fixed; right: 20px; bottom: 20px; width: 340px;
         font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
         background: #16181d; color: #e8e8ea;
         border: 1px solid #2c2f36; border-radius: 12px;
@@ -45,13 +52,41 @@ if (!window.__clarkReaderInjected) {
       .dot { width: 7px; height: 7px; border-radius: 50%; background: #3ddc84; flex: none; }
       .dot.paused { background: #e2b33c; }
       .dot.error  { background: #e05d5d; }
-      .count { margin-left: auto; font-variant-numeric: tabular-nums; }
-      .text {
-        min-height: 34px; max-height: 54px; overflow: hidden;
-        color: #cfd2da; margin-bottom: 10px;
-        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+      .wpm { margin-left: auto; font-variant-numeric: tabular-nums; }
+      .wpm:empty { display: none; }
+      .wpm:empty + .count { margin-left: auto; }
+      .count { font-variant-numeric: tabular-nums; }
+
+      /* The RSVP window. Guide lines above and below with a tick at the pivot
+         column, the way readrrr and Spritz draw it, so the eye has somewhere to
+         rest before the first word arrives. */
+      .rsvp { margin: 2px 0 10px; }
+      .rsvp[hidden] { display: none; }
+      .guide { position: relative; height: 1px; background: #2c2f36; }
+      .guide::after {
+        content: ""; position: absolute; left: 50%; width: 1px; height: 7px;
+        background: #4a4f5c; transform: translateX(-.5px);
       }
-      .text.err { color: #f0a0a0; }
+      .guide.top::after { top: -7px; }
+      .guide.bottom::after { bottom: -7px; }
+      .word {
+        display: flex; align-items: baseline; height: 58px; overflow: hidden;
+        font: 700 30px/58px Georgia, "Times New Roman", Times, serif;
+        color: #f4f4f6; white-space: pre;
+      }
+      .word.long { font-size: 22px; }
+      .word .l { flex: 1 1 0; min-width: 0; text-align: right; }
+      .word .p { flex: none; color: #ff2d2d; }
+      .word .r { flex: 1 1 0; min-width: 0; text-align: left; }
+      .bar { height: 2px; background: #2c2f36; border-radius: 1px; margin-top: 8px; overflow: hidden; }
+      .bar > div { height: 100%; width: 0; background: #e8e8ea; transition: width .12s linear; }
+
+      .text {
+        min-height: 20px; max-height: 40px; overflow: hidden; font-size: 12px;
+        color: #8b90a0; margin-bottom: 10px;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      }
+      .text.err { color: #f0a0a0; font-size: 13px; }
       .row { display: flex; gap: 6px; align-items: center; }
       button {
         flex: 1; appearance: none; cursor: pointer;
@@ -66,12 +101,19 @@ if (!window.__clarkReaderInjected) {
       button.primary:hover { background: #3d7bf5; }
       @media (prefers-reduced-motion: reduce) {
         .card { transition: none; }
+        .bar > div { transition: none; }
       }
     </style>
     <div class="card" part="card">
       <div class="head">
         <span class="dot"></span><span class="label">ClarkReader</span>
-        <span class="count"></span>
+        <span class="wpm"></span><span class="count"></span>
+      </div>
+      <div class="rsvp">
+        <div class="guide top"></div>
+        <div class="word"><span class="l"></span><span class="p"></span><span class="r"></span></div>
+        <div class="guide bottom"></div>
+        <div class="bar"><div></div></div>
       </div>
       <div class="text"></div>
       <div class="row">
@@ -86,7 +128,14 @@ if (!window.__clarkReaderInjected) {
     card: root.querySelector(".card"),
     dot: root.querySelector(".dot"),
     label: root.querySelector(".label"),
+    wpm: root.querySelector(".wpm"),
     count: root.querySelector(".count"),
+    rsvp: root.querySelector(".rsvp"),
+    word: root.querySelector(".word"),
+    left: root.querySelector(".word .l"),
+    pivot: root.querySelector(".word .p"),
+    right: root.querySelector(".word .r"),
+    bar: root.querySelector(".bar > div"),
     text: root.querySelector(".text"),
     prev: root.querySelector(".prev"),
     next: root.querySelector(".next"),
@@ -114,6 +163,95 @@ if (!window.__clarkReaderInjected) {
     for (const b of [el.prev, el.next, el.toggle, el.stop]) b.disabled = !on;
   }
 
+  // ------------------------------------------------------------------ RSVP
+
+  /** Index of the letter the eye should land on: Spritz's optimal recognition point,
+   *  a little left of centre and further left the longer the word. Leading
+   *  punctuation is skipped so "(roughly)" pivots on a letter, not the bracket. */
+  function pivotIndex(word) {
+    const lead = (word.match(/^[^\p{L}\p{N}]*/u) ?? [""])[0].length;
+    const core = word.slice(lead).replace(/[^\p{L}\p{N}]+$/u, "");
+    const n = core.length;
+    if (n === 0) return 0;
+    return lead + (n <= 1 ? 0 : n <= 5 ? 1 : n <= 9 ? 2 : n <= 13 ? 3 : 4);
+  }
+
+  /** The word being spoken at `pos` seconds into the chunk: the last one that has
+   *  started, or the first while the voice is still drawing breath. */
+  function wordAt(words, pos) {
+    let hit = words[0];
+    for (const w of words) {
+      if (w.s <= pos) hit = w;
+      else break;
+    }
+    return hit;
+  }
+
+  // What the player last told us, plus the wall-clock moment it was true. From that,
+  // the position at any later instant is a subtraction — no per-word messages.
+  let clock = null;
+  let frame = 0;
+  let shown = null;
+
+  function positionNow() {
+    if (!clock) return 0;
+    const drift = clock.playing ? (Date.now() - clock.at) / 1000 : 0;
+    return Math.min(clock.position + drift, clock.duration || Infinity);
+  }
+
+  function renderWord(word) {
+    if (word === shown) return;
+    shown = word;
+    const k = pivotIndex(word);
+    el.left.textContent = word.slice(0, k);
+    el.pivot.textContent = word.charAt(k);
+    el.right.textContent = word.slice(k + 1);
+    el.word.className = word.length > 14 ? "word long" : "word";
+  }
+
+  function clearWord() {
+    shown = null;
+    el.left.textContent = el.pivot.textContent = el.right.textContent = "";
+    el.bar.style.width = "0%";
+    el.wpm.textContent = "";
+  }
+
+  function tick() {
+    frame = 0;
+    if (!clock) return;
+    const pos = positionNow();
+    if (clock.words.length) renderWord(wordAt(clock.words, pos).t);
+    if (total > 0) {
+      const within = clock.duration ? Math.min(pos / clock.duration, 1) : 0;
+      el.bar.style.width = `${((clock.index + within) / total) * 100}%`;
+    }
+    if (clock.playing) frame = requestAnimationFrame(tick);
+  }
+
+  function setClock(msg) {
+    clock = {
+      words: msg.words ?? [],
+      duration: msg.duration ?? 0,
+      position: msg.position ?? 0,
+      at: msg.at ?? Date.now(),
+      playing: msg.state === "playing",
+      index: msg.index,
+    };
+    if (clock.words.length && clock.duration) {
+      el.wpm.textContent = `${Math.round((clock.words.length / clock.duration) * 60)} wpm`;
+    }
+    if (frame) cancelAnimationFrame(frame);
+    tick();
+  }
+
+  function stopClock() {
+    clock = null;
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+  }
+
+  // -------------------------------------------------------------- messages
+
   const send = (action) => api.runtime.sendMessage({ type: "cr-control", action });
   el.prev.addEventListener("click", () => send("prev"));
   el.next.addEventListener("click", () => send("next"));
@@ -124,6 +262,8 @@ if (!window.__clarkReaderInjected) {
     if (!msg?.type?.startsWith("cr-")) return;
 
     if (msg.type === "cr-status" && msg.state === "preparing") {
+      stopClock();
+      clearWord();
       el.dot.className = "dot";
       el.label.textContent = "ClarkReader";
       el.count.textContent = "";
@@ -136,6 +276,7 @@ if (!window.__clarkReaderInjected) {
 
     if (msg.type === "cr-start") {
       total = msg.count;
+      el.rsvp.hidden = msg.rsvp === false;
       el.label.textContent = msg.voice === "bf_emma" ? "Emma" : msg.voice;
       el.count.textContent = `1 / ${total}`;
       setControlsEnabled(true);
@@ -153,11 +294,14 @@ if (!window.__clarkReaderInjected) {
       el.toggle.textContent = paused ? "Resume" : "Pause";
       el.prev.disabled = msg.index === 0;
       el.next.disabled = msg.index >= total - 1;
+      setClock(msg);
       show();
       return;
     }
 
     if (msg.type === "cr-ended") {
+      stopClock();
+      el.bar.style.width = "100%";
       el.dot.className = "dot";
       el.count.textContent = "";
       el.text.textContent = "Finished.";
@@ -169,6 +313,8 @@ if (!window.__clarkReaderInjected) {
     }
 
     if (msg.type === "cr-error") {
+      stopClock();
+      clearWord();
       el.dot.className = "dot error";
       el.label.textContent = "ClarkReader";
       el.count.textContent = "";

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClarkReader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Reads the text you select aloud in the Emma voice, synthesized locally. No text ever leaves this machine.",
   "permissions": [
     "contextMenus",

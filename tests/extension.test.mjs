@@ -23,9 +23,15 @@ const JOB = {
   chunks: [{ i: 0, text: "First sentence." }, { i: 1, text: "Second sentence." }],
 };
 
+const WORDS = {
+  words: [{ t: "First", s: 0.3, e: 0.6 }, { t: "sentence.", s: 0.6, e: 1.0 }],
+  duration: 1.1,
+};
+
 class FakeAudioContext {
   constructor() {
     this.state = "running";
+    this.currentTime = 0;
     FakeAudioContext.sources = [];
   }
   get destination() { return {}; }
@@ -81,6 +87,7 @@ function makeStubs({ offscreen }) {
   const fetchStub = async (url, opts) => {
     calls.fetches.push({ url, opts });
     if (url.endsWith("/prepare")) return { ok: true, json: async () => JOB };
+    if (url.includes("/words/")) return { ok: true, json: async () => WORDS };
     return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
   };
 
@@ -225,4 +232,128 @@ test("player advances, skips and stops without stranding a source", async () => 
   const before = reports.length;
   await vm.runInContext("p.stop()", ctx);
   assert.equal(reports.length, before, "stopping a finished job should be silent");
+});
+
+test("progress carries the server's word timings and where playback is", async () => {
+  const { api, fetchStub } = makeStubs({ offscreen: false });
+  const ctx = vm.createContext({ console, fetch: fetchStub, AudioContext: FakeAudioContext, browser: api, Date });
+  vm.runInContext(read("api.js"), ctx, { filename: "api.js" });
+  vm.runInContext(read("player.js"), ctx, { filename: "player.js" });
+
+  const reports = [];
+  ctx.report = (m) => reports.push(m);
+  const before = Date.now();
+  await vm.runInContext(
+    `globalThis.p = new ClarkPlayer(report); p.start('http://s', ${JSON.stringify(JOB)})`, ctx);
+
+  const first = reports.at(-1);
+  assert.equal(first.type, "cr-progress");
+  assert.deepEqual(first.words, WORDS.words, "words must be the server's timings");
+  assert.equal(first.duration, 1, "duration comes from the decoded buffer");
+  assert.equal(first.position, 0, "a fresh chunk starts at the beginning");
+  assert.ok(first.at >= before, "the report is stamped with wall-clock time");
+
+  // Pausing reports the frozen position, not a stale one.
+  ctx.p.ctx.currentTime = 0.42;
+  await vm.runInContext("p.toggle()", ctx);
+  const paused = reports.at(-1);
+  assert.equal(paused.state, "paused");
+  assert.ok(Math.abs(paused.position - 0.42) < 1e-9);
+});
+
+test("a server without /words still gets a word per beat, spaced by length", async () => {
+  const { api, fetchStub } = makeStubs({ offscreen: false });
+  const oldServer = async (url, opts) =>
+    url.includes("/words/") ? { ok: false, status: 404 } : fetchStub(url, opts);
+  const ctx = vm.createContext({ console, fetch: oldServer, AudioContext: FakeAudioContext, browser: api, Date });
+  vm.runInContext(read("api.js"), ctx, { filename: "api.js" });
+  vm.runInContext(read("player.js"), ctx, { filename: "player.js" });
+
+  const reports = [];
+  ctx.report = (m) => reports.push(m);
+  await vm.runInContext(
+    `globalThis.p = new ClarkPlayer(report); p.start('http://s', ${JSON.stringify(JOB)})`, ctx);
+
+  const words = reports.at(-1).words;
+  assert.deepEqual(Array.from(words, (w) => w.t), ["First", "sentence."]);
+  assert.equal(words[0].s, 0);
+  assert.equal(words.at(-1).e, 1, "the estimate spans the whole buffer");
+  assert.ok(words[1].e - words[1].s > words[0].e - words[0].s,
+    "a longer word gets a longer slot");
+});
+
+/** A content-script sandbox whose shadow DOM hands out one stable element per
+ *  selector, so a test can read back what the overlay wrote into it. */
+function loadContent() {
+  const listeners = [];
+  const nodes = new Map();
+  function el() {
+    return { id: "", style: {}, className: "", textContent: "",
+             disabled: false, hidden: false, isConnected: false,
+             addEventListener() {}, append() {}, appendChild() {},
+             attachShadow: () => shadow, classList: { add() {}, remove() {} } };
+  }
+  const shadow = {
+    innerHTML: "",
+    querySelector: (sel) => {
+      if (!nodes.has(sel)) nodes.set(sel, el());
+      return nodes.get(sel);
+    },
+  };
+  // A synchronous rAF would recurse forever inside the RSVP loop; defer it instead.
+  const sandbox = {
+    console, setTimeout, clearTimeout, Date,
+    requestAnimationFrame: (f) => setTimeout(f, 0),
+    cancelAnimationFrame: clearTimeout,
+    chrome: { runtime: { sendMessage() {}, onMessage: { addListener: (f) => listeners.push(f) } } },
+    document: { createElement: el, body: el(), documentElement: el() },
+  };
+  sandbox.window = sandbox;
+  vm.runInContext(read("content.js"), vm.createContext(sandbox), { filename: "content.js" });
+  return { nodes, onMessage: listeners[0] };
+}
+
+test("the RSVP window shows the word the voice is on, anchored on its pivot letter", async () => {
+  const { nodes, onMessage } = loadContent();
+  const q = (sel) => nodes.get(sel);
+  onMessage({ type: "cr-start", count: 2, voice: "bf_emma", rsvp: true });
+
+  const words = [
+    { t: "Reading", s: 0.3, e: 0.7 }, { t: "isn't", s: 0.7, e: 0.95 },
+    { t: "the", s: 0.95, e: 1.05 }, { t: "(roughly).", s: 1.05, e: 2.0 },
+  ];
+  const base = { type: "cr-progress", index: 0, total: 2, text: "", words, duration: 2.2 };
+
+  // Reported 1.0 s ago from position 0 while playing -> the voice is on "the".
+  onMessage({ ...base, state: "playing", position: 0, at: Date.now() - 1000 });
+  assert.equal(q(".word .l").textContent + q(".word .p").textContent + q(".word .r").textContent, "the");
+  assert.equal(q(".word .p").textContent, "h", "2-5 letter words pivot on the second letter");
+  assert.equal(q(".wpm").textContent, "109 wpm");
+
+  // The pivot skips leading punctuation: "(roughly)." anchors on the third letter
+  // of "roughly", as a 6-9 letter word should, not on the bracket.
+  onMessage({ ...base, state: "paused", position: 1.5, at: Date.now() });
+  assert.equal(q(".word .p").textContent, "u");
+  assert.equal(q(".word .l").textContent, "(ro");
+  assert.equal(q(".word .r").textContent, "ghly).");
+
+  // Paused: time passing must not move the word.
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(q(".word .p").textContent, "u");
+
+  // Before the first word has started, the first word is shown, not nothing.
+  onMessage({ ...base, state: "paused", position: 0.1, at: Date.now() });
+  assert.equal(q(".word .p").textContent, "a");
+  assert.equal(q(".word .l").textContent, "Re");
+
+  onMessage({ type: "cr-ended" });
+  assert.equal(q(".bar > div").style.width, "100%");
+});
+
+test("the RSVP window can be switched off from the popup setting", () => {
+  const { nodes, onMessage } = loadContent();
+  onMessage({ type: "cr-start", count: 1, voice: "bf_emma", rsvp: false });
+  assert.equal(nodes.get(".rsvp").hidden, true);
+  onMessage({ type: "cr-start", count: 1, voice: "bf_emma", rsvp: true });
+  assert.equal(nodes.get(".rsvp").hidden, false);
 });

@@ -9,8 +9,29 @@
 // Where this runs differs by browser — an offscreen document in Chrome, the
 // background page in Firefox — so the constructor takes the reporting function
 // instead of reaching for a messaging API itself.
+//
+// Word timing rides along with each chunk. The server reports where every word
+// starts and ends in the audio, and each progress report carries that list plus how
+// far into the chunk playback is and the wall-clock moment that was true. The
+// overlay runs its own clock from there, so the word being spoken is shown without
+// a message per word crossing two process boundaries.
 
 const PREFETCH = 2; // sentences kept decoded ahead of the one playing
+
+/** Even spacing for a server that reports no timings (a non-English voice, or an
+ *  older build). Each word takes a share of the chunk proportional to its length,
+ *  which tracks speech far better than one slot per word: "a" is not "extraordinary". */
+function estimateWords(text, duration) {
+  const parts = (text || "").split(/\s+/).filter(Boolean);
+  const weights = parts.map((w) => w.length + 1);
+  const total = weights.reduce((a, b) => a + b, 0) || 1;
+  let t = 0;
+  return parts.map((w, i) => {
+    const s = t;
+    t += (weights[i] / total) * duration;
+    return { t: w, s: Math.round(s * 1000) / 1000, e: Math.round(t * 1000) / 1000 };
+  });
+}
 
 class ClarkPlayer {
   constructor(report) {
@@ -21,6 +42,10 @@ class ClarkPlayer {
     this.buffers = new Map();
     this.source = null;
     this.index = 0;
+    // AudioContext time at which the current chunk's source started; the context
+    // clock freezes while suspended, so currentTime minus this is always the
+    // position inside the chunk, paused or not.
+    this.startedAt = 0;
     // Bumped on every stop/restart so callbacks from an abandoned job can tell that
     // they are stale and decline to advance the new one.
     this.token = 0;
@@ -44,12 +69,22 @@ class ClarkPlayer {
 
   async fetchChunk(i, token) {
     if (this.buffers.has(i)) return this.buffers.get(i);
-    const res = await fetch(`${this.server}/chunk/${this.job.id}/${i}`);
+    const tail = `/${this.job.id}/${i}`;
+    // Timings are optional: a failure here degrades to even spacing, never to silence.
+    const wordsReq = fetch(`${this.server}/words${tail}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    const res = await fetch(`${this.server}/chunk${tail}`);
     if (!res.ok) throw new Error(`chunk ${i}: ${res.status} ${res.statusText}`);
     const bytes = await res.arrayBuffer();
     const buf = await this.ctx.decodeAudioData(bytes);
-    if (token === this.token) this.buffers.set(i, buf);
-    return buf;
+    const timing = await wordsReq;
+    const words = timing?.words?.length
+      ? timing.words
+      : estimateWords(this.job.chunks[i]?.text, buf.duration);
+    const chunk = { buf, words };
+    if (token === this.token) this.buffers.set(i, chunk);
+    return chunk;
   }
 
   prefetch(from, token) {
@@ -67,9 +102,9 @@ class ClarkPlayer {
     }
 
     this.index = i;
-    let buf;
+    let chunk;
     try {
-      buf = await this.fetchChunk(i, token);
+      chunk = await this.fetchChunk(i, token);
     } catch (err) {
       this.teardown();
       this.report({ type: "cr-playback-error", message: err.message });
@@ -80,7 +115,7 @@ class ClarkPlayer {
     this.prefetch(i + 1, token);
 
     const source = this.ctx.createBufferSource();
-    source.buffer = buf;
+    source.buffer = chunk.buf;
     source.connect(this.ctx.destination);
     source.onended = () => {
       // A source stopped by skip/stop clears its own handler first, so reaching here
@@ -89,6 +124,7 @@ class ClarkPlayer {
     };
     this.source = source;
     source.start();
+    this.startedAt = this.ctx.currentTime;
 
     // Buffers already played are dropped so a long article does not accumulate
     // decoded audio for the whole selection.
@@ -100,12 +136,17 @@ class ClarkPlayer {
   }
 
   emit(i) {
+    const chunk = this.buffers.get(i);
     this.report({
       type: "cr-progress",
       index: i,
       total: this.count,
       text: this.job?.chunks[i]?.text ?? "",
       state: this.ctx?.state === "running" ? "playing" : "paused",
+      words: chunk?.words ?? [],
+      duration: chunk?.buf?.duration ?? 0,
+      position: this.ctx ? Math.max(0, this.ctx.currentTime - this.startedAt) : 0,
+      at: Date.now(),
     });
   }
 

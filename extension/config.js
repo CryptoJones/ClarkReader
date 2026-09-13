@@ -5,6 +5,7 @@ const DEFAULTS = {
   voice: "bf_emma",
   speed: 0.88,
   showOverlay: true,
+  rsvp: true, // flash each word in the overlay as it is spoken
 };
 
 async function getSettings() {

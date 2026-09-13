@@ -3,7 +3,7 @@
 # ClarkReader
 
 Select text anywhere in the browser, press <kbd>Alt</kbd>+<kbd>R</kbd>, and hear it read
-back in the Emma voice.
+back in the Emma voice while each word flashes up on screen as she says it.
 
 Everything is synthesized on this machine by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M).
 No API key, no per-character billing, and nothing you select is sent anywhere — which is
@@ -18,6 +18,7 @@ courses and the Math-for-ML video, so a page read aloud sounds like the rest of 
 selection ──▶ extension ──▶ POST /prepare ──▶ sentence split
                               │
                               ├──▶ GET /chunk/<job>/0 ──▶ plays immediately (~90 ms)
+                              ├──▶ GET /words/<job>/0 ──▶ where each word falls in it
                               └──▶ GET /chunk/<job>/1..n  prefetched while 0 plays
 ```
 
@@ -91,9 +92,29 @@ a bundler.
 | <kbd>Alt</kbd>+<kbd>S</kbd> | stop |
 | right-click a selection | **Read aloud with Emma** |
 
-A small player appears at the bottom right showing the sentence being spoken and the
-position in the selection, with skip-back and skip-forward by sentence. The toolbar popup
-switches voice and speed, and tells you whether the server is up.
+A small player appears at the bottom right with skip-back and skip-forward by sentence.
+The toolbar popup switches voice and speed, and tells you whether the server is up.
+
+### The word window
+
+The player shows the word being spoken, one at a time, at a fixed spot — the way
+[Spritz](https://en.wikipedia.org/wiki/Rapid_serial_visual_presentation)-style readers
+such as readrrr do it. One letter a little left of centre is red: the *optimal recognition
+point*, where the eye lands to take in the whole word without moving. Guide lines above
+and below with a tick at that column give the eye somewhere to rest, a progress bar
+tracks the selection, and the effective words per minute is shown in the header.
+
+The difference from a speed-reading app is what sets the pace. There is no WPM dial:
+the word changes when the voice reaches it. Kokoro reports where each token starts and
+ends in the audio it produced, the server merges those into words (gluing `problem` and
+`.` back into `problem.`), and the extension hands the list to the overlay with the
+playback position and the wall-clock moment that was true. The overlay runs its own
+clock from there, so there is no message per word crossing from the player to the tab,
+and pausing freezes the word where the voice stopped.
+
+Voices whose G2P reports no timings — anything outside Kokoro's English — get words
+spaced across the sentence in proportion to their length instead. The popup can switch
+the window off if you only want the audio.
 
 ## Why Kokoro here and not Chatterbox
 
@@ -137,7 +158,7 @@ encoder tops out around 510 phonemes.
 ## Tests
 
 ```bash
-node --test tests/extension.test.mjs                       # extension wiring
+node --test tests/extension.test.mjs                       # extension wiring and the word window
 ~/Source/repos/NarratorTool/.venv/bin/python -m pytest tests/   # server text handling
 ```
 
@@ -146,7 +167,9 @@ WebExtension APIs, loading them exactly the way each browser's manifest does —
 through `importScripts`, Firefox through ordered background scripts. That is what
 catches the failures static checks miss: a name that resolves in one browser and not
 the other, and the re-declaration error a re-injected content script throws on the
-*second* read rather than the first.
+*second* read rather than the first. The overlay is exercised the same way: a progress
+report stamped a second in the past must land on the word the voice is on by now, and
+a paused one must stay put.
 
 ## Notes
 
