@@ -10,11 +10,16 @@ Protocol
     GET  /voices              -> {voices: [...], default}
     POST /prepare {text,...}  -> {id, count, chunks:[{i,text}]}
     GET  /chunk/<id>/<i>      -> audio/wav for one sentence
+    GET  /words/<id>/<i>      -> {words:[{t,s,e}], duration} word timings for it
 
 The split into prepare + per-chunk fetch exists so playback can start after the
 FIRST sentence is synthesized rather than the last. The extension queues chunks
 through the Web Audio API and prefetches ahead, so a long article starts reading
 in well under a second and never gaps between sentences.
+
+Word timings come from Kokoro itself: for English voices the pipeline reports where
+each token starts and ends in the audio it produced, so the extension can flash the
+word being spoken (an RSVP window) without guessing from character counts.
 """
 from __future__ import annotations
 
@@ -176,6 +181,37 @@ def to_wav(audio: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+def word_timings(tokens, offset: float = 0.0) -> list[dict]:
+    """Merge Kokoro's tokens into display words with a start and end in seconds.
+
+    The pipeline tokenizes "problem." as two tokens, "problem" and ".", and marks the
+    join by giving the first an empty `whitespace`. Anything not separated by
+    whitespace is one word on screen, so those runs are glued back together and take
+    the earliest start and latest end among their timed parts. A run with no timing
+    at all (a bare dash, a trailing period the model gave no frames) is dropped
+    rather than shown for zero time. `offset` shifts everything when a chunk had to
+    be synthesized in more than one pass.
+    """
+    if not tokens:
+        return []
+    words: list[dict] = []
+    text, start, end = "", None, None
+    for tok in tokens:
+        text += tok.text
+        s, e = getattr(tok, "start_ts", None), getattr(tok, "end_ts", None)
+        if s is not None and e is not None:
+            start = s if start is None else min(start, s)
+            end = e if end is None else max(end, e)
+        if tok.whitespace:
+            if text.strip() and start is not None:
+                words.append({"t": text, "s": round(start + offset, 3),
+                              "e": round(end + offset, 3)})
+            text, start, end = "", None, None
+    if text.strip() and start is not None:
+        words.append({"t": text, "s": round(start + offset, 3), "e": round(end + offset, 3)})
+    return words
+
+
 # ------------------------------------------------------------------------- engine
 
 class Engine:
@@ -220,14 +256,21 @@ class Engine:
             log.info("pipeline ready in %.1fs", time.time() - t0)
         return self._pipelines[lang]
 
-    def synth(self, text: str, voice: str, speed: float) -> bytes:
+    def synth(self, text: str, voice: str, speed: float) -> tuple[bytes, list[dict]]:
+        """Return (wav bytes, word timings). Timings are empty for languages whose
+        G2P does not report them; the extension then spaces words out evenly."""
         with self._lock:
             pipe = self._pipeline(self.lang_for(voice))
-            parts = [a for _, _, a in pipe(text, voice=voice, speed=speed)]
+            parts: list[np.ndarray] = []
+            words: list[dict] = []
+            for result in pipe(text, voice=voice, speed=speed):
+                offset = sum(len(a) for a in parts) / SAMPLE_RATE
+                words.extend(word_timings(getattr(result, "tokens", None), offset))
+                parts.append(np.asarray(result.audio, dtype=np.float32))
         if not parts:
             raise ValueError(f"no audio produced for {text!r}")
         audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
-        return to_wav(np.asarray(audio, dtype=np.float32))
+        return to_wav(audio), words
 
     def warmup(self, voice: str, speed: float) -> None:
         """Pay the model load and the first-inference cost before any request lands."""
@@ -243,7 +286,7 @@ class Engine:
 # --------------------------------------------------------------------------- jobs
 
 class Job:
-    __slots__ = ("id", "chunks", "voice", "speed", "audio", "lock", "created")
+    __slots__ = ("id", "chunks", "voice", "speed", "audio", "words", "lock", "created")
 
     def __init__(self, chunks: list[str], voice: str, speed: float) -> None:
         self.id = uuid.uuid4().hex[:12]
@@ -251,6 +294,7 @@ class Job:
         self.voice = voice
         self.speed = speed
         self.audio: dict[int, bytes] = {}
+        self.words: dict[int, list[dict]] = {}
         self.lock = threading.Lock()
         self.created = time.time()
 
@@ -276,22 +320,25 @@ class Jobs:
                 self._jobs.move_to_end(jid)
             return job
 
-    def audio(self, job: Job, i: int) -> bytes:
+    def render(self, job: Job, i: int) -> tuple[bytes, list[dict]]:
         """Synthesize chunk i, or return it if a prefetch already did.
 
         The per-job lock means a client that prefetches chunk 2 while the player also
-        asks for chunk 2 waits for one synthesis rather than racing into two.
+        asks for chunk 2 waits for one synthesis rather than racing into two. Audio
+        and word timings come out of the same pass, so asking for either caches both
+        and the second request costs nothing.
         """
         with job.lock:
             if i not in job.audio:
-                job.audio[i] = self.engine.synth(job.chunks[i], job.voice, job.speed)
-            return job.audio[i]
+                job.audio[i], job.words[i] = self.engine.synth(
+                    job.chunks[i], job.voice, job.speed)
+            return job.audio[i], job.words[i]
 
 
 # ------------------------------------------------------------------------ handler
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ClarkReader/1.0"
+    server_version = "ClarkReader/1.1"
     protocol_version = "HTTP/1.1"
 
     engine: Engine
@@ -337,22 +384,26 @@ class Handler(BaseHTTPRequestHandler):
             })
         if path == "/voices":
             return self._json(200, {"voices": self.engine.voices, "default": self.voice})
-        m = re.fullmatch(r"/chunk/([0-9a-f]{12})/(\d+)", path)
+        m = re.fullmatch(r"/(chunk|words)/([0-9a-f]{12})/(\d+)", path)
         if m:
-            return self._chunk(m.group(1), int(m.group(2)))
+            return self._chunk(m.group(1), m.group(2), int(m.group(3)))
         self._json(404, {"error": "not found"})
 
-    def _chunk(self, jid: str, i: int) -> None:
+    def _chunk(self, what: str, jid: str, i: int) -> None:
         job = self.jobs.get(jid)
         if job is None:
             return self._json(404, {"error": "unknown or expired job"})
         if not 0 <= i < len(job.chunks):
             return self._json(404, {"error": "chunk out of range"})
         try:
-            wav = self.jobs.audio(job, i)
+            wav, words = self.jobs.render(job, i)
         except Exception as exc:
             log.exception("synthesis failed for chunk %d of %s", i, jid)
             return self._json(500, {"error": str(exc)})
+        if what == "words":
+            # 44-byte header, then 16-bit mono at SAMPLE_RATE.
+            duration = max(len(wav) - 44, 0) / (2 * SAMPLE_RATE)
+            return self._json(200, {"words": words, "duration": round(duration, 3)})
         self._send(200, wav, "audio/wav")
 
     def do_POST(self) -> None:
