@@ -17,6 +17,7 @@
 // a message per word crossing two process boundaries.
 
 const PREFETCH = 2; // sentences kept decoded ahead of the one playing
+const MAX_FAILURES = 3; // consecutive bad sentences tolerated before giving up
 
 /** Even spacing for a server that reports no timings (a non-English voice, or an
  *  older build). Each word takes a share of the chunk proportional to its length,
@@ -46,6 +47,9 @@ class ClarkPlayer {
     // clock freezes while suspended, so currentTime minus this is always the
     // position inside the chunk, paused or not.
     this.startedAt = 0;
+    // Consecutive sentences that failed to synthesize or decode. One bad sentence in
+    // a long document is skipped; a run of them means the server is gone.
+    this.failures = 0;
     // Bumped on every stop/restart so callbacks from an abandoned job can tell that
     // they are stale and decline to advance the new one.
     this.token = 0;
@@ -55,16 +59,19 @@ class ClarkPlayer {
     return this.job ? this.job.count : 0;
   }
 
-  async start(server, job) {
+  /** Play `job` from sentence `from`: 0 for a fresh read, a bookmark to resume. */
+  async start(server, job, from = 0) {
     this.stop({ silent: true });
     this.token += 1;
     this.server = server;
     this.job = job;
     this.buffers.clear();
     this.index = 0;
+    this.failures = 0;
     if (!this.ctx) this.ctx = new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume();
-    await this.playFrom(0, this.token);
+    const first = Math.min(Math.max(0, from | 0), Math.max(0, this.count - 1));
+    await this.playFrom(first, this.token);
   }
 
   async fetchChunk(i, token) {
@@ -106,11 +113,18 @@ class ClarkPlayer {
     try {
       chunk = await this.fetchChunk(i, token);
     } catch (err) {
+      if (token !== this.token) return;
+      this.failures += 1;
+      if (this.failures <= MAX_FAILURES && i + 1 < this.count) {
+        this.report({ type: "cr-skipped", index: i, message: err.message });
+        return this.playFrom(i + 1, token);
+      }
       this.teardown();
       this.report({ type: "cr-playback-error", message: err.message });
       return;
     }
     if (token !== this.token) return;
+    this.failures = 0;
 
     this.prefetch(i + 1, token);
 

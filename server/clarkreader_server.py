@@ -50,6 +50,12 @@ MAX_CHARS = 320
 # seconds should not grow the process without bound.
 MAX_JOBS = 64
 
+# Synthesized audio is kept only around the chunk being played: this many behind it
+# (so skip-back is free) plus whatever the client has prefetched ahead. A whole
+# document is hours of audio, and caching all of it would be hundreds of megabytes
+# per job; re-synthesizing a sentence on skip-back costs 80 ms instead.
+KEEP_BEHIND = 2
+
 log = logging.getLogger("clarkreader")
 
 
@@ -332,13 +338,26 @@ class Jobs:
             if i not in job.audio:
                 job.audio[i], job.words[i] = self.engine.synth(
                     job.chunks[i], job.voice, job.speed)
+            for k in [k for k in job.audio if k < i - KEEP_BEHIND]:
+                del job.audio[k]
+                job.words.pop(k, None)
             return job.audio[i], job.words[i]
 
 
 # ------------------------------------------------------------------------ handler
 
+_EXTENSION_SCHEMES = ("chrome-extension://", "moz-extension://", "safari-web-extension://")
+
+
+def allowed_origin(origin: str | None) -> str | None:
+    """The origin to echo in Access-Control-Allow-Origin, or None to refuse it."""
+    if origin and origin.startswith(_EXTENSION_SCHEMES):
+        return origin
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ClarkReader/1.1"
+    server_version = "ClarkReader/1.2"
     protocol_version = "HTTP/1.1"
 
     engine: Engine
@@ -349,11 +368,17 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         log.debug("%s - %s", self.address_string(), fmt % args)
 
-    # The extension's origin is chrome-extension://<id>, which is not knowable until
-    # the unpacked extension is loaded, so the server reflects the origin. It binds
-    # to loopback only, so the reachable surface is already this machine.
+    # The extension's origin is chrome-extension://<id> (moz-extension://<uuid> on
+    # Firefox), not knowable until the unpacked extension is loaded, so the server
+    # reflects the origin — but only extension origins. Reflecting anything would let
+    # any web page a user visits drive their local synthesizer; Chrome's private
+    # network rules mostly stop that, Firefox's do not. Requests without an Origin
+    # (curl, the health check) need no CORS headers at all.
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", "*"))
+        origin = allowed_origin(self.headers.get("Origin"))
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 

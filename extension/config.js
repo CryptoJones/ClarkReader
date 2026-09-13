@@ -4,8 +4,8 @@ const DEFAULTS = {
   server: "http://127.0.0.1:8756",
   voice: "bf_emma",
   speed: 0.88,
-  showOverlay: true,
   rsvp: true, // flash each word in the overlay as it is spoken
+  maximized: false, // the overlay fills the viewport; toggled from the overlay itself
 };
 
 async function getSettings() {

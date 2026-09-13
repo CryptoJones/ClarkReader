@@ -3,7 +3,8 @@
 # ClarkReader
 
 Select text anywhere in the browser, press <kbd>Alt</kbd>+<kbd>R</kbd>, and hear it read
-back in the Emma voice while each word flashes up on screen as she says it.
+back in the Emma voice while each word flashes up on screen as she says it. Select
+nothing and the whole article is read instead.
 
 Everything is synthesized on this machine by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M).
 No API key, no per-character billing, and nothing you select is sent anywhere — which is
@@ -34,6 +35,10 @@ sentence is synthesized rather than the last, and the next one is always decoded
 waiting, so there is no gap at the join.
 
 ## Install
+
+Installing from a store gives you the extension only; the server below still has to be
+set up once. The extension opens a setup guide on first install, and again from the
+popup or from any "cannot reach the server" message.
 
 ### 1. The server
 
@@ -87,13 +92,47 @@ a bundler.
 
 | | |
 |---|---|
-| <kbd>Alt</kbd>+<kbd>R</kbd> | read the selection |
+| <kbd>Alt</kbd>+<kbd>R</kbd> | read the selection, or the whole document if nothing is selected |
 | <kbd>Alt</kbd>+<kbd>P</kbd> | pause / resume |
 | <kbd>Alt</kbd>+<kbd>S</kbd> | stop |
+| <kbd>Alt</kbd>+<kbd>M</kbd> | maximize / restore the reader window |
 | right-click a selection | **Read aloud with Emma** |
+| right-click anywhere | **Read entire document with Emma** |
 
 A small player appears at the bottom right with skip-back and skip-forward by sentence.
 The toolbar popup switches voice and speed, and tells you whether the server is up.
+
+### Reading a whole document
+
+With nothing selected, <kbd>Alt</kbd>+<kbd>R</kbd>, the page context menu, or the
+popup's **Read entire document** reads the page's main content: the article without
+its navigation, sidebars, cookie banners and comment threads. The extraction is
+[Mozilla's Readability](https://github.com/mozilla/readability), the library behind
+Firefox's Reader View, vendored under `extension/vendor/` (Apache 2.0) and injected on
+demand like the overlay. It runs against a clone of the document, so the page is
+untouched. The article title is spoken first and shown in the player's header. A page
+Readability cannot make sense of falls back to the visible body text, and the text is
+capped at 250,000 characters, which is a few hours of listening.
+
+A whole document keeps a bookmark. The sentence being read is saved against the page's
+URL after every sentence, so stopping partway and coming back later, even after a
+restart, picks up where the voice left off: <kbd>Alt</kbd>+<kbd>R</kbd> and the context
+menu resume, and the popup offers **Resume reading document · 137 / 400** next to
+**Read entire document**, which starts from the top. Finishing the document clears the
+bookmark, as does a page whose text has changed since it was set. The last hundred
+pages' bookmarks are kept.
+
+Long reads are built not to grow: the server keeps synthesized audio only for the two
+sentences behind the one playing plus whatever the player has prefetched ahead, so a
+three-hour document costs the same memory as a paragraph (skipping back re-synthesizes
+in 80 ms). The player drops decoded audio once it has been played, a page with more
+than 40,000 DOM nodes skips Readability's tree walk and takes the visible text as is,
+and a sentence that fails to synthesize is skipped rather than ending the read; only
+three failures in a row, which means the server is gone, stop it.
+
+PDFs are not read. Chrome's PDF viewer refuses script injection, so there is no way to
+reach the text from a content script; that would need the file fetched and parsed by
+pdf.js in the extension, which is a separate piece of work.
 
 ### The word window
 
@@ -115,6 +154,12 @@ and pausing freezes the word where the voice stopped.
 Voices whose G2P reports no timings — anything outside Kokoro's English — get words
 spaced across the sentence in proportion to their length instead. The popup can switch
 the window off if you only want the audio.
+
+The ⤢ button in the card's header (or <kbd>Alt</kbd>+<kbd>M</kbd>) maximizes the
+reader: the card fills the tab, black, with nothing on it but the word, its guide lines,
+the progress bar and the controls. RSVP works by holding the eye on one spot, and on a
+full screen there is nothing else to look at. <kbd>Esc</kbd> or the button brings the
+small card back, and the choice is remembered for the next read.
 
 ## Why Kokoro here and not Chatterbox
 
@@ -171,10 +216,39 @@ the other, and the re-declaration error a re-injected content script throws on t
 report stamped a second in the past must land on the word the voice is on by now, and
 a paused one must stay put.
 
+## Permissions
+
+Everything the extension asks for, and why. This is also the text on the store listing.
+
+| Permission | Used for |
+|---|---|
+| `activeTab`, `scripting` | reading the selection out of the page you invoked it on, injecting the player overlay and, for a whole-document read, the Readability extractor. Only on the tab you acted on, only when you act. |
+| `contextMenus` | the two right-click items. |
+| `storage` | voice, speed, the word-window and maximize preferences (synced), and bookmarks for documents read whole (local). |
+| `offscreen` (Chrome) | a service worker cannot play audio; the player runs in an offscreen document. |
+| `http://127.0.0.1:8756/*` | the local synthesis server. |
+| optional `http://*/*`, `https://*/*` | a server on another machine, granted only for the one address you type into the popup, and only when you click **Allow access to the server**. |
+
+No remote code: everything that runs ships in the package, Readability included.
+
+## Privacy
+
+ClarkReader sends the text you ask it to read to the server address configured in the
+popup, which by default is your own machine (`127.0.0.1`), and receives audio and word
+timings back. It stores, in your browser's extension storage, the voice and speed you
+chose, whether the word window and maximized view are on, and for documents read whole,
+the URL and the sentence where you stopped so the read can resume. It collects no
+usage data, has no analytics, and makes no network connections other than to the
+server you configured. Nothing is shared with the developer or anyone else. The server
+is open source in this repository and, once the model is cached, makes no network
+connections at all.
+
 ## Notes
 
 - The server binds to loopback and has no authentication. It holds nothing secret, but it
-  will synthesize speech for anything on this machine that can reach the port.
+  will synthesize speech for anything on this machine that can reach the port. It answers
+  cross-origin requests only from extension origins (`chrome-extension://`,
+  `moz-extension://`), so a web page cannot drive it from inside the browser.
 - Once the model and the chosen voice are in the Hugging Face cache, the server sets
   `HF_HUB_OFFLINE=1` for itself and makes no network calls at all — not even the hub's
   update check. A first run still downloads the weights.

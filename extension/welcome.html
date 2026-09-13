@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ClarkReader — setup</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 48px 24px 64px;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0b0b0d; color: #e8e8ea;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font: 700 34px/1.2 Georgia, "Times New Roman", serif; margin: 0 0 6px; }
+  h1 span { color: #ff2d2d; }
+  .sub { color: #8b90a0; margin: 0 0 32px; }
+  h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: #8b90a0; margin: 36px 0 10px; }
+  p { margin: 0 0 12px; }
+  pre {
+    background: #16181d; border: 1px solid #2c2f36; border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: #cfd2da; }
+  kbd {
+    background: #23262e; border: 1px solid #333741; border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; font: 13px ui-monospace, monospace; color: #cfd2da;
+  }
+  a { color: #7aa7ff; }
+  table { border-collapse: collapse; }
+  td { padding: 4px 18px 4px 0; vertical-align: top; }
+  .note { border-left: 3px solid #ff2d2d; padding-left: 12px; color: #cfd2da; }
+</style>
+<main>
+  <h1>Clark<span>R</span>eader</h1>
+  <p class="sub">Select text, press <kbd>Alt</kbd>+<kbd>R</kbd>, hear it read in the Emma voice while each word flashes up as she says it.</p>
+
+  <p class="note">The voice is synthesized on your own machine by a small local server. Nothing you read is sent anywhere. That server has to be installed and running before the extension can do anything, so this page is the one step that matters.</p>
+
+  <h2>1. Install the server (once)</h2>
+  <p>You need Python 3.10 or newer and about 2 GB of disk for the model. In a terminal:</p>
+<pre>git clone https://github.com/CryptoJones/ClarkReader.git
+cd ClarkReader
+python3 -m venv .venv &amp;&amp; .venv/bin/pip install -r server/requirements.txt
+server/run.sh</pre>
+  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. After that it runs fully offline.</p>
+  <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that and the macOS and Windows notes.</p>
+
+  <h2>2. Check the connection</h2>
+  <p>Click the ClarkReader toolbar icon. The popup shows a green dot and <em>kokoro ready</em> when the server is up. On Firefox, the first time, it will ask you to <strong>Allow access to the server</strong>; that is Firefox's opt-in for local connections and is expected.</p>
+
+  <h2>3. Read</h2>
+  <table>
+    <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>read the selection, or the whole page if nothing is selected</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>P</kbd></td><td>pause / resume</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>stop</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>M</kbd></td><td>maximize the reader to the whole tab; <kbd>Esc</kbd> brings it back</td></tr>
+    <tr><td>right-click</td><td><em>Read aloud with Emma</em> on a selection, <em>Read entire document with Emma</em> anywhere</td></tr>
+  </table>
+  <p>A document you stop partway through remembers its place; reading it again picks up there, and the popup offers <em>Resume reading document</em>.</p>
+  <p>If a shortcut clashes with a site you use, change it in your browser's extension shortcut settings (<code>chrome://extensions/shortcuts</code> in Chrome, Manage Extension Shortcuts in Firefox).</p>
+
+  <h2>Using a server on another machine</h2>
+  <p>The server can run on any machine on your network, which is how a Chromebook can use it. Put its address in the popup's <strong>Server</strong> field, then click <strong>Allow access to the server</strong> when the popup asks; the extension only ever has permission for the address you give it.</p>
+
+  <h2>Privacy</h2>
+  <p>ClarkReader sends the text you ask it to read to the server address you configured, which by default is your own machine, and receives audio back. It stores your voice and speed settings, whether the reader is maximized, and where you stopped in documents you read whole. It collects nothing, has no analytics, and makes no other network connections. The full policy is in the <a href="https://github.com/CryptoJones/ClarkReader#privacy">README</a>.</p>
+</main>

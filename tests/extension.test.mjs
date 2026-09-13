@@ -48,10 +48,10 @@ class FakeAudioContext {
 }
 
 /** Records every call so tests can assert on the wiring rather than on internals. */
-function makeStubs({ offscreen }) {
+function makeStubs({ offscreen, selection = "Selected text." }) {
   const calls = { fetches: [], toTab: [], sent: [], executed: [], offscreenDocs: [] };
   const listeners = {};
-  const store = { sync: {}, session: {} };
+  const store = { sync: {}, session: {}, local: {} };
   const on = (name) => ({ addListener: (fn) => { listeners[name] = fn; } });
 
   const api = {
@@ -60,22 +60,33 @@ function makeStubs({ offscreen }) {
       onMessage: on("message"),
       sendMessage: async (m) => { calls.sent.push(m); },
       getContexts: async () => calls.offscreenDocs,
+      getURL: (p) => `ext://id/${p}`,
     },
     contextMenus: { create: () => {}, onClicked: on("menu") },
     commands: { onCommand: on("command") },
     tabs: {
       query: async () => [{ id: 7 }],
       sendMessage: async (tabId, m) => { calls.toTab.push({ tabId, ...m }); },
+      create: async (o) => { calls.opened = [...(calls.opened ?? []), o.url]; },
     },
     scripting: {
+      // Two functions get injected: the selection reader and the page extractor.
+      // They are told apart by what they reference, the way the real page would.
       executeScript: async ({ files, func }) => {
         calls.executed.push(files ? files[0] : "func");
-        return func ? [{ result: "Selected text." }] : [{ result: undefined }];
+        if (!func) return [{ result: undefined }];
+        if (String(func).includes("Readability")) {
+          return [{ result: { title: "Page Title", text: "Page Title. Body of the page.",
+                              key: "https://example.test/article" } }];
+        }
+        if (String(func).includes("location.origin")) return [{ result: "https://example.test/article" }];
+        return [{ result: selection }];
       },
     },
     storage: {
       sync: { get: async (d) => ({ ...d, ...store.sync }), set: async (o) => Object.assign(store.sync, o) },
       session: { get: async (k) => ({ [k]: store.session[k] }), set: async (o) => Object.assign(store.session, o) },
+      local: { get: async (k) => ({ [k]: store.local[k] }), set: async (o) => Object.assign(store.local, o) },
     },
   };
   if (offscreen) {
@@ -91,13 +102,13 @@ function makeStubs({ offscreen }) {
     return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
   };
 
-  return { api, calls, listeners, fetchStub };
+  return { api, calls, listeners, fetchStub, store };
 }
 
 /** Build a background context the way the given browser's manifest does. */
-function loadBackground(browser) {
+function loadBackground(browser, opts = {}) {
   const offscreen = browser === "chrome";
-  const { api, calls, listeners, fetchStub } = makeStubs({ offscreen });
+  const { api, calls, listeners, fetchStub, store } = makeStubs({ offscreen, ...opts });
   const sandbox = { console, fetch: fetchStub, AudioContext: FakeAudioContext, setTimeout, clearTimeout };
   let ctx;
   // Chrome exposes only `chrome` and pulls deps in with importScripts; Firefox exposes
@@ -114,7 +125,7 @@ function loadBackground(browser) {
   const files = offscreen ? ["background.js"]
                           : ["api.js", "config.js", "player.js", "background.js"];
   for (const f of files) vm.runInContext(read(f), ctx, { filename: f });
-  return { ctx, calls, listeners };
+  return { ctx, calls, listeners, store };
 }
 
 const settle = () => new Promise((r) => setImmediate(r));
@@ -132,6 +143,20 @@ test("manifests agree with how each background actually loads", () => {
     ["api.js", "config.js", "player.js", "background.js"]);
   assert.ok(!firefox.permissions.includes("offscreen"), "Firefox has no offscreen API");
   assert.ok(firefox.browser_specific_settings.gecko.id, "Firefox needs an add-on id");
+
+  // background.js handles one fixed set of commands; both manifests must declare it.
+  assert.deepEqual(Object.keys(chrome.commands).sort(),
+    ["read-selection", "stop-reading", "toggle-maximize", "toggle-pause"]);
+  assert.deepEqual(chrome.commands, firefox.commands);
+  assert.equal(chrome.version, firefox.version);
+
+  // Store readiness: an old browser must be refused rather than installing a
+  // broken extension, and a LAN server must be grantable without a new build.
+  assert.equal(chrome.minimum_chrome_version, "116", "offscreen + getContexts need 116");
+  assert.deepEqual(chrome.optional_host_permissions, ["http://*/*", "https://*/*"]);
+  assert.deepEqual(firefox.optional_host_permissions, chrome.optional_host_permissions);
+  assert.match(chrome.homepage_url, /github\.com/);
+  assert.ok(fs.existsSync(path.join(EXT, "welcome.html")), "the setup guide ships in the package");
 });
 
 test("both backgrounds load and pick the right playback path", () => {
@@ -193,7 +218,7 @@ test("content.js survives being injected twice into one page", () => {
   const sandbox = {
     console, setTimeout, clearTimeout, requestAnimationFrame: (f) => f(),
     chrome: { runtime: { sendMessage() {}, onMessage: { addListener: (f) => listeners.push(f) } } },
-    document: { createElement: el, body: el(), documentElement: el() },
+    document: { createElement: el, body: el(), documentElement: el(), addEventListener() {} },
   };
   sandbox.window = sandbox;
   const ctx = vm.createContext(sandbox);
@@ -284,14 +309,24 @@ test("a server without /words still gets a word per beat, spaced by length", asy
 
 /** A content-script sandbox whose shadow DOM hands out one stable element per
  *  selector, so a test can read back what the overlay wrote into it. */
-function loadContent() {
+function loadContent({ stored = {} } = {}) {
   const listeners = [];
+  const keydown = [];
   const nodes = new Map();
   function el() {
-    return { id: "", style: {}, className: "", textContent: "",
-             disabled: false, hidden: false, isConnected: false,
-             addEventListener() {}, append() {}, appendChild() {},
-             attachShadow: () => shadow, classList: { add() {}, remove() {} } };
+    const classes = new Set();
+    const e = { id: "", style: {}, className: "", textContent: "", innerHTML: "", title: "",
+                disabled: false, hidden: false, isConnected: false,
+                handlers: {},
+                addEventListener(type, fn) { e.handlers[type] = fn; },
+                append() {}, appendChild() {},
+                attachShadow: () => shadow,
+                classList: {
+                  add: (c) => classes.add(c), remove: (c) => classes.delete(c),
+                  contains: (c) => classes.has(c),
+                  toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)),
+                } };
+    return e;
   }
   const shadow = {
     innerHTML: "",
@@ -305,12 +340,22 @@ function loadContent() {
     console, setTimeout, clearTimeout, Date,
     requestAnimationFrame: (f) => setTimeout(f, 0),
     cancelAnimationFrame: clearTimeout,
-    chrome: { runtime: { sendMessage() {}, onMessage: { addListener: (f) => listeners.push(f) } } },
-    document: { createElement: el, body: el(), documentElement: el() },
+    chrome: {
+      runtime: { sendMessage() {}, onMessage: { addListener: (f) => listeners.push(f) } },
+      storage: { sync: { get: async (d) => ({ ...d, ...stored }),
+                         set: async (o) => Object.assign(stored, o) } },
+    },
+    document: { createElement: el, body: el(), documentElement: el(),
+                addEventListener: (type, fn) => { if (type === "keydown") keydown.push(fn); } },
   };
   sandbox.window = sandbox;
   vm.runInContext(read("content.js"), vm.createContext(sandbox), { filename: "content.js" });
-  return { nodes, onMessage: listeners[0] };
+  const pressEscape = () => {
+    const e = { key: "Escape", stopped: false, stopPropagation() { e.stopped = true; } };
+    for (const fn of keydown) fn(e);
+    return e;
+  };
+  return { nodes, stored, onMessage: listeners[0], pressEscape };
 }
 
 test("the RSVP window shows the word the voice is on, anchored on its pivot letter", async () => {
@@ -356,4 +401,230 @@ test("the RSVP window can be switched off from the popup setting", () => {
   assert.equal(nodes.get(".rsvp").hidden, true);
   onMessage({ type: "cr-start", count: 1, voice: "bf_emma", rsvp: true });
   assert.equal(nodes.get(".rsvp").hidden, false);
+});
+
+test("the reader can be maximized from the header, the shortcut, and back with Escape", async () => {
+  const { nodes, stored, onMessage, pressEscape } = loadContent();
+  await settle();
+  const card = nodes.get(".card");
+  const size = nodes.get(".size");
+  assert.equal(card.classList.contains("max"), false);
+
+  // Header button toggles and the choice is remembered.
+  size.handlers.click();
+  assert.equal(card.classList.contains("max"), true);
+  assert.match(size.title, /Restore/);
+  assert.equal(stored.maximized, true);
+
+  // Escape restores only while the card is showing; a hidden overlay must not eat
+  // the page's Escape.
+  let e = pressEscape();
+  assert.equal(card.classList.contains("max"), true, "hidden card ignores Escape");
+  assert.equal(e.stopped, false);
+
+  onMessage({ type: "cr-start", count: 1, voice: "bf_emma", rsvp: true });
+  card.classList.add("show"); // show() defers this to a frame; we are the frame
+  e = pressEscape();
+  assert.equal(card.classList.contains("max"), false);
+  assert.equal(e.stopped, true);
+  assert.equal(stored.maximized, false);
+
+  // Alt+M arrives from the background as a message.
+  onMessage({ type: "cr-toggle-max" });
+  assert.equal(card.classList.contains("max"), true);
+});
+
+test("a maximized reader comes back maximized on the next page", async () => {
+  const { nodes } = loadContent({ stored: { maximized: true } });
+  await settle();
+  assert.equal(nodes.get(".card").classList.contains("max"), true);
+});
+
+test("Alt+M reaches the overlay in the active tab", async () => {
+  const { calls, listeners } = loadBackground("firefox");
+  await listeners.command("toggle-maximize");
+  assert.deepEqual(calls.toTab.at(-1), { tabId: 7, type: "cr-toggle-max" });
+});
+
+test("with nothing selected, Alt+R reads the whole document instead of erroring", async () => {
+  const { calls, listeners } = loadBackground("firefox", { selection: "" });
+  await listeners.command("read-selection");
+  await settle();
+
+  assert.ok(calls.executed.includes("vendor/Readability.js"), "Readability must be injected");
+  const prepare = calls.fetches.find((f) => f.url.endsWith("/prepare"));
+  assert.equal(JSON.parse(prepare.opts.body).text, "Page Title. Body of the page.");
+  const start = calls.toTab.find((m) => m.type === "cr-start");
+  assert.equal(start.title, "Page Title", "the overlay is told what it is reading");
+  assert.ok(!calls.toTab.some((m) => m.type === "cr-error"));
+});
+
+test("the page menu item and popup read the whole document even over a selection", async () => {
+  const { calls, listeners } = loadBackground("firefox");
+  await listeners.menu({ menuItemId: "clarkreader-read-page" }, { id: 7 });
+  await settle();
+  let prepare = calls.fetches.filter((f) => f.url.endsWith("/prepare")).at(-1);
+  assert.equal(JSON.parse(prepare.opts.body).text, "Page Title. Body of the page.");
+
+  await new Promise((resolve) =>
+    listeners.message({ type: "cr-read-active", wholePage: true }, {}, resolve));
+  await settle();
+  prepare = calls.fetches.filter((f) => f.url.endsWith("/prepare")).at(-1);
+  assert.equal(JSON.parse(prepare.opts.body).text, "Page Title. Body of the page.");
+
+  // And the selection item still reads the selection.
+  await listeners.menu({ menuItemId: "clarkreader-read-selection", selectionText: "x" }, { id: 7 });
+  await settle();
+  prepare = calls.fetches.filter((f) => f.url.endsWith("/prepare")).at(-1);
+  assert.equal(JSON.parse(prepare.opts.body).text, "Selected text.");
+});
+
+test("a selection still wins over the page when both exist", async () => {
+  const { calls, listeners } = loadBackground("chrome");
+  await listeners.command("read-selection");
+  await settle();
+  assert.ok(!calls.executed.includes("vendor/Readability.js"));
+  const prepare = calls.fetches.find((f) => f.url.endsWith("/prepare"));
+  assert.equal(JSON.parse(prepare.opts.body).text, "Selected text.");
+});
+
+test("one sentence that fails to synthesize is skipped; a run of them stops playback", async () => {
+  const { api, fetchStub } = makeStubs({ offscreen: false });
+  const failing = new Set(["/chunk/abc123def456/0"]);
+  const flaky = async (url, opts) => {
+    if ([...failing].some((f) => url.endsWith(f))) return { ok: false, status: 500, statusText: "boom" };
+    return fetchStub(url, opts);
+  };
+  const ctx = vm.createContext({ console, fetch: flaky, AudioContext: FakeAudioContext, browser: api, Date });
+  vm.runInContext(read("api.js"), ctx, { filename: "api.js" });
+  vm.runInContext(read("player.js"), ctx, { filename: "player.js" });
+  const reports = [];
+  ctx.report = (m) => reports.push(m);
+  await vm.runInContext(
+    `globalThis.p = new ClarkPlayer(report); p.start('http://s', ${JSON.stringify(JOB)})`, ctx);
+
+  assert.ok(reports.some((m) => m.type === "cr-skipped" && m.index === 0));
+  assert.equal(reports.at(-1).type, "cr-progress");
+  assert.equal(reports.at(-1).index, 1, "playback continues with the next sentence");
+
+  // Every remaining sentence failing is a dead server, not a bad sentence.
+  failing.add("/chunk/abc123def456/1");
+  await vm.runInContext(`p.start('http://s', ${JSON.stringify(JOB)})`, ctx);
+  assert.equal(reports.at(-1).type, "cr-playback-error");
+});
+
+const KEY = "https://example.test/article";
+const marks = (store) => store.local.crMarks ?? {};
+const lastPlay = (calls) => calls.sent.filter((m) => m.type === "play").at(-1);
+
+test("a stopped whole-document read leaves a bookmark and resumes from it", async () => {
+  // Chrome: the offscreen player is stubbed out by message, so the background's own
+  // report handler can be driven directly with what the player would have said.
+  const { calls, listeners, store } = loadBackground("chrome", { selection: "" });
+  await listeners.command("read-selection");
+  await settle();
+  assert.equal(lastPlay(calls).from, 0, "a fresh page starts at the top");
+
+  // Sentence 1 of 2 is playing when the user stops.
+  await listeners.message({ type: "cr-progress", index: 1, total: 2, state: "playing" });
+  await settle();
+  assert.deepEqual({ index: marks(store)[KEY].index, count: marks(store)[KEY].count }, { index: 1, count: 2 });
+  await listeners.message({ type: "cr-stopped" });
+  await settle();
+  assert.ok(marks(store)[KEY], "stopping keeps the bookmark");
+
+  // Reading the page again picks up at sentence 1, and the overlay is told so.
+  await listeners.command("read-selection");
+  await settle();
+  assert.equal(lastPlay(calls).from, 1);
+  assert.equal(calls.toTab.filter((m) => m.type === "cr-start").at(-1).from, 1);
+
+  // Finishing clears it: the next read starts over.
+  await listeners.message({ type: "cr-ended" });
+  await settle();
+  assert.equal(marks(store)[KEY], undefined, "finishing clears the bookmark");
+  await listeners.command("read-selection");
+  await settle();
+  assert.equal(lastPlay(calls).from, 0);
+});
+
+test("the popup can start over, and a changed page does not resume", async () => {
+  const { calls, listeners, store } = loadBackground("chrome", { selection: "" });
+  store.local.crMarks = { [KEY]: { index: 1, count: 2, at: 1 } };
+
+  await new Promise((resolve) =>
+    listeners.message({ type: "cr-read-active", wholePage: true, restart: true }, {}, resolve));
+  await settle();
+  assert.equal(lastPlay(calls).from, 0, "restart ignores the bookmark");
+  assert.equal(marks(store)[KEY], undefined, "and drops it");
+
+  // A bookmark whose sentence count no longer matches the page is stale.
+  store.local.crMarks = { [KEY]: { index: 1, count: 99, at: 1 } };
+  await listeners.command("read-selection");
+  await settle();
+  assert.equal(lastPlay(calls).from, 0);
+  assert.equal(marks(store)[KEY], undefined);
+});
+
+test("the popup is told where the active page would resume", async () => {
+  const { listeners, store } = loadBackground("chrome");
+  store.local.crMarks = { [KEY]: { index: 4, count: 10, title: "T", at: 1 } };
+  const mark = await new Promise((resolve) =>
+    listeners.message({ type: "cr-query-mark" }, {}, resolve));
+  assert.equal(mark.index, 4);
+  assert.equal(mark.count, 10);
+  assert.equal(mark.key, KEY);
+});
+
+test("a selection read never writes a bookmark", async () => {
+  const { listeners, store } = loadBackground("firefox");
+  await listeners.command("read-selection");
+  await settle();
+  assert.deepEqual(marks(store), {});
+});
+
+test("the player starts where it is told", async () => {
+  const { api, fetchStub } = makeStubs({ offscreen: false });
+  const ctx = vm.createContext({ console, fetch: fetchStub, AudioContext: FakeAudioContext, browser: api, Date });
+  vm.runInContext(read("api.js"), ctx, { filename: "api.js" });
+  vm.runInContext(read("player.js"), ctx, { filename: "player.js" });
+  const reports = [];
+  ctx.report = (m) => reports.push(m);
+  await vm.runInContext(
+    `globalThis.p = new ClarkPlayer(report); p.start('http://s', ${JSON.stringify(JOB)}, 1)`, ctx);
+  assert.equal(reports.at(-1).index, 1);
+  // Out of range is clamped rather than reading past the end or before the start.
+  await vm.runInContext(`p.start('http://s', ${JSON.stringify(JOB)}, 99)`, ctx);
+  assert.equal(reports.at(-1).index, 1);
+});
+
+test("the setup guide opens on first install and from a server error, never on update", async () => {
+  const { ctx, calls, listeners } = loadBackground("chrome");
+  await listeners.installed({ reason: "update" });
+  await settle();
+  assert.equal(calls.opened, undefined, "an update must not pop a tab");
+  await listeners.installed({ reason: "install" });
+  await settle();
+  assert.deepEqual(calls.opened, ["ext://id/welcome.html"]);
+
+  // The overlay's "Open the setup guide" button and the popup link send one message.
+  await listeners.message({ type: "cr-open-help" });
+  await settle();
+  assert.equal(calls.opened.length, 2);
+
+  // A stopped server error carries the flag that shows that button.
+  vm.runInContext("globalThis.fetch = async () => { throw new TypeError('failed'); }", ctx);
+  await listeners.command("read-selection");
+  await settle();
+  const err = calls.toTab.find((m) => m.type === "cr-error");
+  assert.equal(err.help, true);
+  assert.doesNotMatch(err.message, /run\.sh/, "store users have no run.sh");
+});
+
+test("the overlay shows the setup button only for a reachable-server error", () => {
+  const { nodes, onMessage } = loadContent();
+  onMessage({ type: "cr-error", message: "Cannot reach the server.", help: true });
+  assert.equal(nodes.get(".help").className, "help show");
+  onMessage({ type: "cr-error", message: "Nothing to read on this page." });
+  assert.equal(nodes.get(".help").className, "help");
 });
