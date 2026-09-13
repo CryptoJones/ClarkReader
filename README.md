@@ -112,7 +112,7 @@ Firefox's Reader View, vendored under `extension/vendor/` (Apache 2.0) and injec
 demand like the overlay. It runs against a clone of the document, so the page is
 untouched. The article title is spoken first and shown in the player's header. A page
 Readability cannot make sense of falls back to the visible body text, and the text is
-capped at 250,000 characters, which is a few hours of listening.
+capped at a million characters, which is longer than most novels.
 
 A whole document keeps a bookmark. The sentence being read is saved against the page's
 URL after every sentence, so stopping partway and coming back later, even after a
@@ -133,6 +133,24 @@ three failures in a row, which means the server is gone, stop it.
 PDFs are not read. Chrome's PDF viewer refuses script injection, so there is no way to
 reach the text from a content script; that would need the file fetched and parsed by
 pdf.js in the extension, which is a separate piece of work.
+
+### EPUBs
+
+Chrome has no EPUB renderer. `tools/read_epub.py` turns one into pages it can open:
+
+```bash
+tools/read_epub.py "Mona Lisa Overdrive.epub"      # unpacks next to the file and opens it
+tools/read_epub.py book.epub --out ~/Books/mlo --no-open
+```
+
+It writes a contents page with the cover and chapter list, adds previous/next links to
+each of the book's own chapter files, and builds `book.html` with every chapter in
+reading order for **Read entire document** and its bookmark. Standard library only,
+so it works wherever the repo was cloned. Chapter titles come from the EPUB 3 nav
+document or the EPUB 2 NCX, falling back to each chapter's first heading.
+
+Chrome keeps extensions off local files until told otherwise, once: in
+`chrome://extensions`, ClarkReader → **Details** → **Allow access to file URLs**.
 
 ### The word window
 
