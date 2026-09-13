@@ -353,9 +353,17 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
 
-  if (msg?.type?.startsWith("cr-") && !["cr-query", "cr-query-mark", "cr-read-active"].includes(msg.type)) {
+  if (msg?.type?.startsWith("cr-") && !["cr-query", "cr-query-mark", "cr-read-active", "cr-version"].includes(msg.type)) {
     handleReport(msg);
     return;
+  }
+
+  // The popup checks that the background it is talking to is the same build as the
+  // files on disk (see popup.js). An older background has no handler for this and
+  // the popup's send resolves to undefined, which reads as "stale".
+  if (msg?.type === "cr-version") {
+    sendResponse(api.runtime.getManifest().version);
+    return true;
   }
 
   // The popup asks for current status to render its controls.

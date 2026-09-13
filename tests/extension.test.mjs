@@ -61,6 +61,7 @@ function makeStubs({ offscreen, selection = "Selected text." }) {
       sendMessage: async (m) => { calls.sent.push(m); },
       getContexts: async () => calls.offscreenDocs,
       getURL: (p) => `ext://id/${p}`,
+      getManifest: () => ({ version: "9.9.9" }),
     },
     contextMenus: { create: () => {}, onClicked: on("menu") },
     commands: { onCommand: on("command") },
@@ -627,4 +628,10 @@ test("the overlay shows the setup button only for a reachable-server error", () 
   assert.equal(nodes.get(".help").className, "help show");
   onMessage({ type: "cr-error", message: "Nothing to read on this page." });
   assert.equal(nodes.get(".help").className, "help");
+});
+
+test("the background reports its running version so a fresh popup can spot a stale one", async () => {
+  const { listeners } = loadBackground("chrome");
+  const v = await new Promise((resolve) => listeners.message({ type: "cr-version" }, {}, resolve));
+  assert.equal(v, "9.9.9");
 });

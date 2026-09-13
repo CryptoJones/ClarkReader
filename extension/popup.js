@@ -1,5 +1,30 @@
+/** Reload the extension if its background is older than the files on disk.
+ *
+ *  Chrome reads a popup fresh from disk every time it opens, but keeps running the
+ *  background worker it loaded at startup — an unpacked extension whose files were
+ *  updated is then a new popup talking to an old worker, and the buttons it shows
+ *  do things the worker has never heard of. The manifest fetched here comes from
+ *  disk; the version the background reports comes from memory. If they differ (or
+ *  the background does not answer at all, which an older one cannot), reload, which
+ *  re-reads everything. Store installs update atomically and never hit this. */
+async function ensureFreshBackground() {
+  try {
+    const onDisk = (await (await fetch(api.runtime.getURL("manifest.json"))).json()).version;
+    const running = await api.runtime.sendMessage({ type: "cr-version" }).catch(() => undefined);
+    if (running !== onDisk) {
+      document.getElementById("statusText").textContent = "updating ClarkReader…";
+      api.runtime.reload();
+      return false;
+    }
+  } catch {
+    /* cannot tell; carry on with what we have */
+  }
+  return true;
+}
+
 (async () => {
   const $ = (id) => document.getElementById(id);
+  if (!(await ensureFreshBackground())) return;
   const settings = await getSettings();
 
   $("server").value = settings.server;
