@@ -55,19 +55,34 @@ metadata=()
 [[ -f "$here/store/amo-metadata.json" ]] && metadata=(--amo-metadata "$here/store/amo-metadata.json")
 
 out="$here/web-ext-artifacts"
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+status=0
 npx --yes web-ext@8 sign \
   --source-dir "$here/dist/firefox" \
   --artifacts-dir "$out" \
   --channel "$channel" \
   "${metadata[@]}" \
-  --no-input
+  --no-input 2>&1 | tee "$log" || status=$?
 
-xpi="$(ls -t "$out"/*.xpi 2>/dev/null | head -1 || true)"
+# A listed version is reviewed by a person, which takes days; web-ext stops waiting
+# after a few minutes and calls that a timeout. The submission is complete at that
+# point, so for the listed channel it is the expected, successful outcome.
+if [[ "$channel" == listed ]] && grep -q "Approval: timeout exceeded" "$log"; then
+  url="$(grep -o 'https://addons.mozilla.org/[^ ]*/versions/[0-9]*' "$log" | head -1 || true)"
+  echo
+  echo "submitted: ClarkReader $version is waiting for Mozilla's review."
+  [[ -n "$url" ]] && echo "status: $url"
+  exit 0
+fi
+(( status == 0 )) || exit "$status"
+
+xpi="$(ls -t "$out"/*-"$version".xpi 2>/dev/null | head -1 || true)"
 if [[ -n "$xpi" ]]; then
   echo
   echo "signed: $xpi"
   echo "Install it by opening that file in Firefox (File > Open File, or drag it onto a window)."
 else
-  echo "web-ext finished but no .xpi was produced; see its output above." >&2
+  echo "web-ext finished but no .xpi for $version was produced; see its output above." >&2
   exit 1
 fi
