@@ -82,6 +82,23 @@ systemctl --user daemon-reload && systemctl --user enable --now clarkreader
 pick `dist/firefox/manifest.json`. Firefox treats MV3 host permissions as opt-in, so the
 first time, open the toolbar popup and click **Allow access to the server**.
 
+Firefox keeps a temporary add-on for one session only, and refuses to install the zip
+permanently because Mozilla has not signed it. To keep it installed, sign it as an
+*unlisted* add-on, which is free, creates no public listing, and comes back within
+minutes as an `.xpi` that installs once and stays:
+
+```bash
+export WEB_EXT_API_KEY='user:…'      # https://addons.mozilla.org/developers/addon/api/key/
+export WEB_EXT_API_SECRET='…'
+./sign.sh                            # builds, signs, prints the .xpi path
+```
+
+Open the `.xpi` in Firefox to install it. Every version needs signing again, so this
+is the release step for Firefox; `./sign.sh --listed` submits to the public listing
+instead. The credentials are read from the environment by web-ext and never printed.
+The add-on id in the manifest is bound to the first account that signs it, so use the
+one you mean to publish under.
+
 The two builds differ only in the manifest. Chrome's background is a service worker with
 no DOM, so playback goes in an offscreen document; Firefox's background is an event page
 that has one, so the same player class runs directly in it. That is also why nothing here
