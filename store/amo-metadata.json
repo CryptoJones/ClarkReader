@@ -3,7 +3,7 @@
     "license": "MIT",
     "approval_notes": "The extension talks only to a local text-to-speech server the user runs themselves; source for both halves is at https://github.com/CryptoJones/ClarkReader. vendor/Readability.js is Mozilla Readability 0.6.0 with its two innerHTML assignments replaced by a DOM clone and a DOMParser parse (documented in vendor/README.md and vendor/Readability.clarkreader.patch in the repository), so the build lints clean. No remote code, no minified code, no data collection.",
     "release_notes": {
-      "en-US": "Long words and URLs no longer run past the edge of the word window: each word is measured and scaled to fit with its red pivot letter pinned to the centre, and a token too long for that is centred whole at a readable size."
+      "en-US": "The bundled Readability library no longer assigns innerHTML anywhere, so the add-on lints clean. Long words and URLs fit the word window (from 1.2.4). Documentation now states what hardware the server needs and that Linux is the only tested platform."
     }
   },
   "categories": [

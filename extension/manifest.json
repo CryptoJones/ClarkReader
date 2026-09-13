@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClarkReader",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Reads the text you select aloud in the Emma voice, synthesized locally. No text ever leaves this machine.",
   "homepage_url": "https://github.com/CryptoJones/ClarkReader",
   "minimum_chrome_version": "116",
