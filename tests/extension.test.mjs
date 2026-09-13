@@ -310,7 +310,7 @@ test("a server without /words still gets a word per beat, spaced by length", asy
 
 /** A content-script sandbox whose shadow DOM hands out one stable element per
  *  selector, so a test can read back what the overlay wrote into it. */
-function loadContent({ stored = {} } = {}) {
+function loadContent({ stored = {}, measure = null } = {}) {
   const listeners = [];
   const keydown = [];
   const nodes = new Map();
@@ -349,6 +349,17 @@ function loadContent({ stored = {} } = {}) {
     document: { createElement: el, body: el(), documentElement: el(),
                 addEventListener: (type, fn) => { if (type === "keydown") keydown.push(fn); } },
   };
+  // Optional text metrics: a `measure` of { box, fontPx, charPx } gives the word box a
+  // width and makes every glyph the same width, so a test can check the fit maths.
+  if (measure) {
+    shadow.querySelector(".word").clientWidth = measure.box;
+    sandbox.getComputedStyle = () => ({ fontSize: `${measure.fontPx}px` });
+    sandbox.document.createRange = () => {
+      let node = null;
+      return { selectNodeContents(n) { node = n; },
+               getBoundingClientRect: () => ({ width: node.textContent.length * measure.charPx }) };
+    };
+  }
   sandbox.window = sandbox;
   vm.runInContext(read("content.js"), vm.createContext(sandbox), { filename: "content.js" });
   const pressEscape = () => {
@@ -394,6 +405,40 @@ test("the RSVP window shows the word the voice is on, anchored on its pivot lett
 
   onMessage({ type: "cr-ended" });
   assert.equal(q(".bar > div").style.width, "100%");
+});
+
+test("a word too long for half the box is shrunk to fit rather than clipped", () => {
+  // A 300px box at 30px with 20px glyphs: each half holds 150px, seven glyphs or so.
+  const { nodes, onMessage } = loadContent({ measure: { box: 300, fontPx: 30, charPx: 20 } });
+  const word = nodes.get(".word");
+  onMessage({ type: "cr-start", count: 1, voice: "bf_emma", rsvp: true });
+  const show = (t) => onMessage({ type: "cr-progress", index: 0, total: 1, text: "", duration: 1,
+                                  words: [{ t, s: 0, e: 1 }], state: "paused", position: 0.5, at: Date.now() });
+
+  show("Reading");
+  assert.equal(word.style.fontSize, "", "a short word keeps the stylesheet's size");
+
+  // Pivot on the fifth letter leaves a 13-glyph tail (260px) plus half the pivot (10px)
+  // to fit in 150px with the pivot still pinned: 30px * 150 / 270, floored.
+  show("characteristically");
+  assert.equal(nodes.get(".word .r").textContent, "cteristically");
+  assert.equal(word.style.fontSize, "16px");
+  assert.ok(!word.classList.contains("wide"), "the pivot stays pinned");
+
+  // A 19-glyph tail would need 11px pinned, too small to read: the pivot drifts and
+  // the whole 24-glyph token (480px) is fitted to the full box, 30px * 300 / 480.
+  show("CryptoJones/OSApplyTrack");
+  assert.equal(word.style.fontSize, "18px");
+  assert.ok(word.classList.contains("wide"));
+
+  // Even a bare URL bottoms out at a readable floor rather than a smudge.
+  show("https://github.com/CryptoJones/OSApplyTrack/releases/");
+  assert.equal(word.style.fontSize, "10px");
+  assert.ok(word.classList.contains("wide"));
+
+  show("the");
+  assert.equal(word.style.fontSize, "", "the next short word gets the full size back");
+  assert.ok(!word.classList.contains("wide"), "and the pivot is pinned again");
 });
 
 test("the RSVP window can be switched off from the popup setting", () => {
