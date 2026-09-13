@@ -113,6 +113,8 @@ if (!window.__clarkReaderInjected) {
       .word .l { flex: 1 1 0; min-width: 0; text-align: right; }
       .word .p { flex: none; color: #ff2d2d; }
       .word .r { flex: 1 1 0; min-width: 0; text-align: left; }
+      .word.wide { justify-content: center; }
+      .word.wide .l, .word.wide .r { flex: 0 0 auto; }
       .bar { height: 2px; background: #2c2f36; border-radius: 1px; margin-top: 8px; overflow: hidden; }
       .bar > div { height: 100%; width: 0; background: #e8e8ea; transition: width .12s linear; }
 
@@ -291,6 +293,49 @@ if (!window.__clarkReaderInjected) {
     el.pivot.textContent = word.charAt(k);
     el.right.textContent = word.slice(k + 1);
     el.word.className = word.length > 14 ? "word long" : "word";
+    fitWord();
+  }
+
+  /** Shrink the word until both halves fit. The pivot letter is pinned to the
+   *  centre, so each half gets half the box, and a word with a long tail past its
+   *  pivot ("CryptoJones/OSApplyTrack" pivots on its fifth letter) would otherwise
+   *  run off the edge and be clipped. Text width scales with font size, so a single
+   *  measurement at the stylesheet's size gives the size that fits. */
+  function fitWord() {
+    el.word.style.fontSize = "";
+    el.word.classList.remove("wide");
+    const box = el.word.clientWidth;
+    if (!box || typeof document.createRange !== "function" ||
+        typeof getComputedStyle !== "function") return;
+    const width = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return range.getBoundingClientRect().width;
+    };
+    const left = width(el.left), pivot = width(el.pivot), right = width(el.right);
+    const need = Math.max(left, right) + pivot / 2;
+    if (need <= box / 2) return;
+    const base = parseFloat(getComputedStyle(el.word).fontSize);
+    let size = Math.floor((base * box) / 2 / need);
+    if (size < 12) {
+      // Too far gone for a pinned pivot (a bare URL, say): let the pivot drift and
+      // fit the whole token to the full box instead of shrinking it to a smudge.
+      el.word.classList.add("wide");
+      size = Math.max(10, Math.floor((base * box) / (left + pivot + right)));
+    }
+    el.word.style.fontSize = `${size}px`;
+  }
+
+  // The box changes width on maximize and on window resize; refit the word shown.
+  // Only width matters: a refit changes the height, and reacting to that would loop.
+  if (typeof ResizeObserver === "function") {
+    let lastWidth = 0;
+    new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width;
+      if (w === lastWidth) return;
+      lastWidth = w;
+      if (shown !== null) fitWord();
+    }).observe(el.word);
   }
 
   function clearWord() {
