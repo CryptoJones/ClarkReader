@@ -70,6 +70,29 @@ cp server/clarkreader.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now clarkreader
 ```
 
+### Hardware and platforms
+
+The server runs Kokoro through PyTorch. If PyTorch can see a CUDA GPU the model goes
+there; otherwise it runs on the CPU. Nothing needs configuring. There is no Apple GPU
+(MPS) path in Kokoro's pipeline, so on a Mac it runs on the CPU. Measured on an
+i7-13700HX with an RTX 4060 Laptop GPU, warm pipeline, `bf_emma`, best of three:
+
+| Sentence | Audio produced | CPU | CUDA |
+|---|---|---|---|
+| 3 words | 1.9 s | 0.75 s | 0.33 s |
+| 12 words | 4.0 s | 2.3 s | 0.61 s |
+| 24 words | 7.5 s | 4.1 s | 1.6 s |
+
+Both are faster than real time, and the server synthesizes ahead of playback a sentence
+at a time, so a CPU is enough to keep the voice going. The GPU mostly shortens the pause
+before the first sentence and after a skip. The model takes about 2 GB of disk.
+
+Linux is the only platform the server and both extension builds have been tested on.
+macOS and Windows run the same Python, PyTorch and Kokoro, so the server should work
+there by starting `server/clarkreader_server.py` from a venv with
+`server/requirements.txt` installed (`run.sh` needs bash and the systemd unit is
+Linux-only), but nobody has tried it yet. Reports welcome.
+
 ### 2. The extension
 
 ```bash
@@ -211,8 +234,10 @@ What *does* apply is the rest of the comparison, and it goes the other way:
 - **Short selections.** Chatterbox misreads short inputs as entirely different words —
   79% of the time at one word, 51% at two, 33% at three. Selection-reading is full of short
   selections: a term, a heading, a table cell.
-- **Latency.** 82M on CPU synthesizes a sentence in ~80 ms. A 0.5B model on the GPU is an
-  order of magnitude slower, which is the difference between "instant" and "waiting".
+- **Latency.** 82M synthesizes a short sentence in about a third of a second on a laptop
+  GPU and under a second on its CPU (measured under **Hardware and platforms**). A 0.5B
+  model is an order of magnitude slower, which is the difference between "instant" and
+  "waiting".
 - **The voice is already Kokoro's.** `bf_emma` is a native Kokoro voice; Chatterbox's
   `house` voice is that same voice cloned from a banked clip. Both roads reach Emma, and
   this is the short one.

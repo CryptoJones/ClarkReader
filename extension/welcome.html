@@ -41,7 +41,7 @@ cd ClarkReader
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install -r server/requirements.txt
 server/run.sh</pre>
   <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. After that it runs fully offline.</p>
-  <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that and the macOS and Windows notes.</p>
+  <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that, along with what hardware the server needs. Linux is the only platform it has been tested on so far.</p>
 
   <h2>2. Check the connection</h2>
   <p>Click the ClarkReader toolbar icon. The popup shows a green dot and <em>kokoro ready</em> when the server is up. On Firefox, the first time, it will ask you to <strong>Allow access to the server</strong>; that is Firefox's opt-in for local connections and is expected.</p>
