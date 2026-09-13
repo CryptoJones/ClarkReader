@@ -49,11 +49,17 @@ command -v npx >/dev/null || { echo "sign.sh: npx (Node.js) is required" >&2; ex
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$here/dist/firefox/manifest.json")"
 echo "signing ClarkReader $version ($channel)…"
 
+# A listed version must declare its license; store/amo-metadata.json carries that,
+# the release notes and the note to the reviewer. Unlisted signing ignores it.
+metadata=()
+[[ -f "$here/store/amo-metadata.json" ]] && metadata=(--amo-metadata "$here/store/amo-metadata.json")
+
 out="$here/web-ext-artifacts"
 npx --yes web-ext@8 sign \
   --source-dir "$here/dist/firefox" \
   --artifacts-dir "$out" \
   --channel "$channel" \
+  "${metadata[@]}" \
   --no-input
 
 xpi="$(ls -t "$out"/*.xpi 2>/dev/null | head -1 || true)"
