@@ -26,7 +26,7 @@ Select text on any page and press Alt+R to hear it read in Emma, a natural Engli
 
 Privacy: the text you ask to read goes to the server address you configure, which by default is your own machine (127.0.0.1), and audio comes back. The extension stores only your settings and where you stopped in documents. No analytics, no accounts, no other network connections. Once the model is cached the server itself makes no network connections at all.
 
-The server needs Python 3.10 or newer and about 2 GB of disk for the model. It runs on Linux, macOS and Windows, and can run on another machine on your network; grant the extension access to that address from the toolbar popup.
+The server needs Python 3.10 or newer and about 2 GB of disk for the model. It has been tested on Linux; macOS and Windows use the same Python and torch stack but have not been tried yet. It can run on another machine on your network; grant the extension access to that address from the toolbar popup.
 
 ## Categories
 

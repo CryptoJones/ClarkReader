@@ -1040,7 +1040,10 @@ Readability.prototype = {
       return null;
     }
 
-    var pageCacheHtml = page.innerHTML;
+    // ClarkReader: a DOM clone instead of an innerHTML round trip. Same restore,
+    // no markup assignment (Mozilla's no-unsanitized rule, which AMO's linter
+    // enforces, flags innerHTML assignments even from the document's own markup).
+    var pageCache = page.cloneNode(true);
 
     while (true) {
       this.log("Starting grabArticle loop");
@@ -1545,8 +1548,13 @@ Readability.prototype = {
       var textLength = this._getInnerText(articleContent, true).length;
       if (textLength < this._charThreshold) {
         parseSuccessful = false;
-        // eslint-disable-next-line no-unsanitized/property
-        page.innerHTML = pageCacheHtml;
+        while (page.firstChild) {
+          page.removeChild(page.firstChild);
+        }
+        var restored = pageCache.cloneNode(true);
+        while (restored.firstChild) {
+          page.appendChild(restored.firstChild);
+        }
 
         this._attempts.push({
           articleContent,
@@ -1919,13 +1927,17 @@ Readability.prototype = {
       if (!this._isSingleImage(noscript)) {
         return;
       }
+      // ClarkReader: parse the noscript markup in an inert DOMParser document
+      // (no scripts run, nothing loads) and adopt the nodes, instead of
+      // assigning it to innerHTML.
       var tmp = doc.createElement("div");
-      // We're running in the document context, and using unmodified
-      // document contents, so doing this should be safe.
-      // (Also we heavily discourage people from allowing script to
-      // run at all in this document...)
-      // eslint-disable-next-line no-unsanitized/property
-      tmp.innerHTML = noscript.innerHTML;
+      var parsed = new DOMParser().parseFromString(
+        noscript.innerHTML,
+        "text/html"
+      );
+      while (parsed.body.firstChild) {
+        tmp.appendChild(doc.adoptNode(parsed.body.firstChild));
+      }
 
       // If noscript has previous sibling and it only contains image,
       // replace it with noscript content. However we also keep old
