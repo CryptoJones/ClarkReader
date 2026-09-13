@@ -6,9 +6,10 @@ if (typeof importScripts === "function") importScripts("api.js", "config.js");
 const MENU_ID = "clarkreader-read-selection";
 const MENU_PAGE_ID = "clarkreader-read-page";
 
-// A page's main content can run to a few hundred kilobytes of text on the worst
-// offenders; past this it is not an article and would take hours to read anyway.
-const MAX_PAGE_CHARS = 250_000;
+// A novel is 400-600k characters and reads in six to eight hours, and memory on both
+// ends is bounded per sentence rather than per document, so the cap only needs to
+// stop the pathological: a page that is a database dump, not something to listen to.
+const MAX_PAGE_CHARS = 1_000_000;
 
 // The service worker is killed and restarted freely, so anything a later control
 // command needs to know is mirrored into session storage rather than kept only here.
@@ -290,7 +291,6 @@ async function readSelection(tabId, fallbackText, { wholePage = false, restart =
     await toTab(tabId, {
       type: "cr-start",
       count: job.count,
-      chunks: job.chunks,
       voice: job.voice,
       rsvp: settings.rsvp,
       title,
