@@ -11,7 +11,7 @@ const player = new ClarkPlayer((msg) => {
 api.runtime.onMessage.addListener((msg) => {
   if (msg?.target !== "offscreen") return;
   if (msg.type === "play") {
-    player.start(msg.server, msg.job).catch((err) =>
+    player.start(msg.server, msg.job, msg.from).catch((err) =>
       api.runtime.sendMessage({ type: "cr-playback-error", message: err.message })
         .catch(() => {}));
     return;

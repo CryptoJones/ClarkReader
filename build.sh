@@ -23,6 +23,12 @@ for browser in chrome firefox; do
     cp "$src/manifest.firefox.json" "$dest/manifest.json"
   fi
   echo "built $dest"
+  # The store package: the directory's contents with the manifest at the zip root,
+  # which is what both stores' upload forms expect. Named by the manifest version
+  # so a release's assets and its tag cannot disagree.
+  version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$dest/manifest.json")"
+  (cd "$dest" && zip -qr "$out/clarkreader-$version-$browser.zip" .)
+  echo "packed $out/clarkreader-$version-$browser.zip"
 done
 
 cat <<'MSG'

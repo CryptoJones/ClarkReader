@@ -35,6 +35,8 @@
       text.textContent = "needs permission to reach the server";
       $("grant").hidden = false;
       $("read").disabled = true;
+      $("readPage").disabled = true;
+      $("resume").disabled = true;
       select.disabled = true;
       return;
     }
@@ -62,12 +64,16 @@
       select.value = voices.voices.includes(settings.voice) ? settings.voice : voices.default;
       select.disabled = false;
       $("read").disabled = false;
+      $("readPage").disabled = false;
+      $("resume").disabled = false;
     } catch {
       dot.className = "dot bad";
-      text.textContent = "server not running — see server/run.sh";
+      text.textContent = "server not running — see the setup guide below";
       select.innerHTML = "<option>unavailable</option>";
       select.disabled = true;
       $("read").disabled = true;
+      $("readPage").disabled = true;
+      $("resume").disabled = true;
     }
   }
 
@@ -93,6 +99,27 @@
   });
   $("read").addEventListener("click", async () => {
     await api.runtime.sendMessage({ type: "cr-read-active" });
+    window.close();
+  });
+  // "Read entire document" always starts at the top; "Resume" appears only when the
+  // page has a bookmark, and names the sentence it would pick up from.
+  $("readPage").addEventListener("click", async () => {
+    await api.runtime.sendMessage({ type: "cr-read-active", wholePage: true, restart: true });
+    window.close();
+  });
+  $("resume").addEventListener("click", async () => {
+    await api.runtime.sendMessage({ type: "cr-read-active", wholePage: true });
+    window.close();
+  });
+  api.runtime.sendMessage({ type: "cr-query-mark" }).then((mark) => {
+    if (!mark) return;
+    $("resume").textContent = `Resume reading document · ${mark.index + 1} / ${mark.count}`;
+    $("resume").hidden = false;
+  }).catch(() => {});
+
+  $("help").addEventListener("click", (e) => {
+    e.preventDefault();
+    api.runtime.sendMessage({ type: "cr-open-help" });
     window.close();
   });
 

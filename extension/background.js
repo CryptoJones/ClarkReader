@@ -4,10 +4,40 @@
 if (typeof importScripts === "function") importScripts("api.js", "config.js");
 
 const MENU_ID = "clarkreader-read-selection";
+const MENU_PAGE_ID = "clarkreader-read-page";
+
+// A page's main content can run to a few hundred kilobytes of text on the worst
+// offenders; past this it is not an article and would take hours to read anyway.
+const MAX_PAGE_CHARS = 250_000;
 
 // The service worker is killed and restarted freely, so anything a later control
 // command needs to know is mirrored into session storage rather than kept only here.
-let state = { tabId: null, jobId: null, index: 0, count: 0, playing: false };
+let state = { tabId: null, jobId: null, index: 0, count: 0, playing: false,
+              pageKey: null, title: "" };
+
+// Bookmarks for whole-document reads, keyed by page URL without its fragment. Kept in
+// local storage (sync's per-item quota is too small for a list of URLs) and capped, so
+// a reader who samples a hundred pages does not accumulate a hundred stale marks.
+const MAX_MARKS = 100;
+
+async function getMarks() {
+  const { crMarks } = await api.storage.local.get("crMarks");
+  return crMarks ?? {};
+}
+async function setMark(key, mark) {
+  const marks = await getMarks();
+  marks[key] = { ...mark, at: Date.now() };
+  const keys = Object.keys(marks).sort((a, b) => marks[b].at - marks[a].at);
+  for (const k of keys.slice(MAX_MARKS)) delete marks[k];
+  await api.storage.local.set({ crMarks: marks });
+}
+async function clearMark(key) {
+  const marks = await getMarks();
+  if (key in marks) {
+    delete marks[key];
+    await api.storage.local.set({ crMarks: marks });
+  }
+}
 
 // Firefox only: with no offscreen document, the player runs right here.
 let localPlayer = null;
@@ -22,18 +52,39 @@ async function saveState(patch) {
   await api.storage.session.set({ crState: state });
 }
 
-api.runtime.onInstalled.addListener(() => {
+const HELP_URL = "welcome.html";
+
+/** The setup guide, in its own tab. The extension is useless without the local
+ *  server, so this opens on first install and from every "cannot reach it" error. */
+async function openHelp() {
+  try {
+    await api.tabs.create({ url: api.runtime.getURL(HELP_URL) });
+  } catch (err) {
+    console.warn("ClarkReader: could not open the setup guide —", err.message);
+  }
+}
+
+api.runtime.onInstalled.addListener((details) => {
+  if (details?.reason === "install") openHelp();
   api.contextMenus.create({
     id: MENU_ID,
     title: "Read aloud with Emma",
     contexts: ["selection"],
   });
+  api.contextMenus.create({
+    id: MENU_PAGE_ID,
+    title: "Read entire document with Emma",
+    contexts: ["page", "selection"],
+  });
 });
 
 api.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === MENU_ID && tab?.id != null) {
+  if (tab?.id == null) return;
+  if (info.menuItemId === MENU_ID) {
     // info.selectionText is truncated by the browser, so it is only the fallback.
     readSelection(tab.id, info.selectionText);
+  } else if (info.menuItemId === MENU_PAGE_ID) {
+    readSelection(tab.id, "", { wholePage: true });
   }
 });
 
@@ -42,6 +93,8 @@ api.commands.onCommand.addListener(async (command) => {
   if (command === "read-selection" && tab?.id != null) return readSelection(tab.id);
   if (command === "toggle-pause") return control("toggle");
   if (command === "stop-reading") return control("stop");
+  // The overlay owns its own size; the shortcut just reaches it in the active tab.
+  if (command === "toggle-maximize" && tab?.id != null) return toTab(tab.id, { type: "cr-toggle-max" });
 });
 
 // ---------------------------------------------------------------- page plumbing
@@ -70,6 +123,65 @@ async function getSelectionText(tabId) {
     return hit ?? "";
   } catch {
     return "";
+  }
+}
+
+/** The page's main content, as Reader View would show it.
+ *
+ * Readability is injected on demand, like the overlay, and runs against a clone so
+ * the page itself is untouched. It lands in the extension's isolated world, where
+ * the extracting function that follows can see it. A page it cannot make sense of
+ * (a search results page, a dashboard) falls back to the visible body text, which
+ * is better than reading nothing. */
+async function getPageText(tabId) {
+  try {
+    await api.scripting.executeScript({ target: { tabId }, files: ["vendor/Readability.js"] });
+    const [hit] = await api.scripting.executeScript({
+      target: { tabId },
+      func: (limit) => {
+        let title = document.title || "";
+        let text = "";
+        try {
+          // Readability clones and walks the whole tree. On a page with tens of
+          // thousands of nodes that is a memory spike a Chromebook cannot afford,
+          // and such a page is not an article anyway: take the visible text as is.
+          if (document.getElementsByTagName("*").length > 40_000) throw new Error("too large");
+          const article = new Readability(document.cloneNode(true)).parse();
+          if (article?.textContent?.trim()) {
+            title = article.title || title;
+            text = article.textContent;
+          }
+        } catch {
+          /* fall through to the body text */
+        }
+        if (!text.trim()) text = document.body?.innerText ?? "";
+        // Readability keeps paragraph breaks as newlines; the server flattens
+        // whitespace, so only leading and trailing space and the hard cap matter.
+        text = text.trim();
+        if (title.trim()) text = `${title.trim()}. ${text}`;
+        const key = location.origin + location.pathname + location.search;
+        return { title, text: text.slice(0, limit), key };
+      },
+      args: [MAX_PAGE_CHARS],
+    });
+    return hit?.result ?? { title: "", text: "", key: null };
+  } catch {
+    return { title: "", text: "", key: null };
+  }
+}
+
+/** Where a whole-document read of the active tab would resume, for the popup. */
+async function markForTab(tabId) {
+  try {
+    const [hit] = await api.scripting.executeScript({
+      target: { tabId },
+      func: () => location.origin + location.pathname + location.search,
+    });
+    const key = hit?.result;
+    const mark = key ? (await getMarks())[key] : null;
+    return mark ? { key, ...mark } : null;
+  } catch {
+    return null;
   }
 }
 
@@ -108,23 +220,36 @@ async function toPlayer(msg) {
     return api.runtime.sendMessage({ ...msg, target: "offscreen" });
   }
   const player = getLocalPlayer();
-  if (msg.type === "play") return player.start(msg.server, msg.job);
+  if (msg.type === "play") return player.start(msg.server, msg.job, msg.from);
   if (msg.type === "control") return player.control(msg.action);
 }
 
 // ---------------------------------------------------------------------- reading
 
-async function readSelection(tabId, fallbackText) {
+/** Read the selection, or with `wholePage` (or no selection at all) the page's
+ *  main content. Alt+R therefore reads whatever is selected, and the whole article
+ *  when nothing is.
+ *
+ *  A whole document resumes from its bookmark unless `restart` is set: the mark is
+ *  written after every sentence while it plays and cleared when it finishes, so a
+ *  read that was stopped picks up where it left off and a finished one starts over. */
+async function readSelection(tabId, fallbackText, { wholePage = false, restart = false } = {}) {
   const settings = await getSettings();
   const hasOverlay = await ensureContent(tabId);
-  const text = (await getSelectionText(tabId)) || (fallbackText ?? "").trim();
+  let text = wholePage ? "" : (await getSelectionText(tabId)) || (fallbackText ?? "").trim();
+  let title = "";
+  let pageKey = null;
 
   if (!text) {
-    if (hasOverlay) await toTab(tabId, { type: "cr-error", message: "Nothing selected." });
+    if (hasOverlay) await toTab(tabId, { type: "cr-status", state: "preparing" });
+    ({ title, text, key: pageKey } = await getPageText(tabId));
+  }
+  if (!text) {
+    if (hasOverlay) await toTab(tabId, { type: "cr-error", message: "Nothing to read on this page." });
     return;
   }
 
-  await saveState({ tabId, playing: false, index: 0, count: 0, jobId: null });
+  await saveState({ tabId, playing: false, index: 0, count: 0, jobId: null, pageKey, title });
   if (hasOverlay) await toTab(tabId, { type: "cr-status", state: "preparing" });
 
   let job;
@@ -143,14 +268,24 @@ async function readSelection(tabId, fallbackText) {
     await toTab(tabId, {
       type: "cr-error",
       message: offline
-        ? "Cannot reach the ClarkReader server. Start it with server/run.sh, and on Firefox allow access to 127.0.0.1 from the toolbar popup."
+        ? "Cannot reach the ClarkReader server. It runs on your own machine and has to be started first."
         : `Could not prepare audio: ${err.message}`,
+      help: offline,
     });
     return;
   }
 
-  await saveState({ jobId: job.id, count: job.count, index: 0, playing: true });
-  await toPlayer({ type: "play", server: settings.server, job });
+  // Resume only if the page still splits into the same number of sentences; a
+  // different count means the content changed and the old position is meaningless.
+  let from = 0;
+  if (pageKey) {
+    const mark = restart ? null : (await getMarks())[pageKey];
+    if (mark && mark.count === job.count && mark.index < job.count) from = mark.index;
+    else await clearMark(pageKey);
+  }
+
+  await saveState({ jobId: job.id, count: job.count, index: from, playing: true });
+  await toPlayer({ type: "play", server: settings.server, job, from });
   if (hasOverlay) {
     await toTab(tabId, {
       type: "cr-start",
@@ -158,6 +293,8 @@ async function readSelection(tabId, fallbackText) {
       chunks: job.chunks,
       voice: job.voice,
       rsvp: settings.rsvp,
+      title,
+      from,
     });
   }
 }
@@ -176,14 +313,23 @@ async function handleReport(msg) {
   if (msg.type === "cr-progress") {
     await loadState();
     await saveState({ index: msg.index, playing: msg.state === "playing" });
+    if (state.pageKey) {
+      await setMark(state.pageKey, { index: msg.index, count: msg.total, title: state.title });
+    }
     if (state.tabId != null) await toTab(state.tabId, msg);
     return;
   }
   if (msg.type === "cr-ended" || msg.type === "cr-stopped") {
     await loadState();
-    const tabId = state.tabId;
-    await saveState({ jobId: null, playing: false, index: 0, count: 0 });
+    const { tabId, pageKey } = state;
+    // Finishing clears the bookmark; stopping leaves it so the read can resume.
+    if (msg.type === "cr-ended" && pageKey) await clearMark(pageKey);
+    await saveState({ jobId: null, playing: false, index: 0, count: 0, pageKey: null, title: "" });
     if (tabId != null) await toTab(tabId, { type: "cr-ended" });
+    return;
+  }
+  if (msg.type === "cr-skipped") {
+    console.warn(`ClarkReader: skipped sentence ${msg.index}: ${msg.message}`);
     return;
   }
   if (msg.type === "cr-playback-error") {
@@ -202,7 +348,12 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
 
-  if (msg?.type?.startsWith("cr-") && msg.type !== "cr-query" && msg.type !== "cr-read-active") {
+  if (msg?.type === "cr-open-help") {
+    openHelp();
+    return;
+  }
+
+  if (msg?.type?.startsWith("cr-") && !["cr-query", "cr-query-mark", "cr-read-active"].includes(msg.type)) {
     handleReport(msg);
     return;
   }
@@ -213,12 +364,26 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
-  // The popup can start a read on the active tab.
+  // The popup can start a read on the active tab: the selection, or the whole page
+  // (resuming from its bookmark, or from the top with `restart`).
   if (msg?.type === "cr-read-active") {
     (async () => {
       const [tab] = await api.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id != null) await readSelection(tab.id);
+      if (tab?.id != null) {
+        await readSelection(tab.id, "", {
+          wholePage: Boolean(msg.wholePage), restart: Boolean(msg.restart),
+        });
+      }
       sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  // The popup asks whether the active tab has a bookmark to offer resuming.
+  if (msg?.type === "cr-query-mark") {
+    (async () => {
+      const [tab] = await api.tabs.query({ active: true, currentWindow: true });
+      sendResponse(tab?.id != null ? await markForTab(tab.id) : null);
     })();
     return true;
   }

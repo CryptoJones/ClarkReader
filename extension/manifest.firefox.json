@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ClarkReader",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Reads the text you select aloud in the Emma voice, synthesized locally. No text ever leaves this machine.",
+  "homepage_url": "https://github.com/CryptoJones/ClarkReader",
   "permissions": [
     "contextMenus",
     "storage",
@@ -11,6 +12,10 @@
   ],
   "host_permissions": [
     "http://127.0.0.1:8756/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -39,6 +44,12 @@
         "default": "Alt+S"
       },
       "description": "Stop reading"
+    },
+    "toggle-maximize": {
+      "suggested_key": {
+        "default": "Alt+M"
+      },
+      "description": "Maximize or restore the reader window"
     }
   },
   "background": {

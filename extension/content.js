@@ -44,11 +44,40 @@ if (!window.__clarkReaderInjected) {
         pointer-events: none;
       }
       .card.show { opacity: 1; transform: none; pointer-events: auto; }
+
+      /* Maximized: the whole viewport, nothing but the word. RSVP works by holding
+         the eye on one spot; on a full screen there is nothing else to look at. */
+      .card.max {
+        inset: 0; width: auto; right: 0; bottom: 0; border-radius: 0; border: 0;
+        background: #0b0b0d; padding: 24px 32px 28px;
+        display: flex; flex-direction: column;
+      }
+      .card.max .head { font-size: 12px; }
+      .card.max .rsvp {
+        flex: 1; display: flex; flex-direction: column; justify-content: center;
+        width: min(100%, 780px); margin: 0 auto;
+      }
+      .card.max .rsvp[hidden] { display: none; }
+      .card.max .guide::after { height: 12px; }
+      .card.max .guide.top::after { top: -12px; }
+      .card.max .guide.bottom::after { bottom: -12px; }
+      .card.max .word {
+        height: auto; line-height: 1.25; padding: 28px 0;
+        font-size: clamp(44px, 8vw, 112px);
+      }
+      .card.max .word.long { font-size: clamp(30px, 5.5vw, 72px); }
+      .card.max .bar { margin-top: 24px; }
+      .card.max .text {
+        font-size: 16px; max-height: 48px; text-align: center; -webkit-line-clamp: 2;
+        width: min(100%, 780px); margin: 0 auto 18px;
+      }
+      .card.max .row { width: min(100%, 420px); margin: 0 auto; }
       .head {
         display: flex; align-items: center; gap: 8px;
         font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
         color: #8b90a0; margin-bottom: 8px;
       }
+      .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
       .dot { width: 7px; height: 7px; border-radius: 50%; background: #3ddc84; flex: none; }
       .dot.paused { background: #e2b33c; }
       .dot.error  { background: #e05d5d; }
@@ -56,6 +85,12 @@ if (!window.__clarkReaderInjected) {
       .wpm:empty { display: none; }
       .wpm:empty + .count { margin-left: auto; }
       .count { font-variant-numeric: tabular-nums; }
+      .size {
+        flex: none; appearance: none; cursor: pointer; margin-left: 10px;
+        background: transparent; color: #8b90a0; border: 0; padding: 0 2px;
+        font-size: 14px; line-height: 1; font-family: inherit;
+      }
+      .size:hover { color: #e8e8ea; background: transparent; }
 
       /* The RSVP window. Guide lines above and below with a tick at the pivot
          column, the way readrrr and Spritz draw it, so the eye has somewhere to
@@ -87,6 +122,9 @@ if (!window.__clarkReaderInjected) {
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
       }
       .text.err { color: #f0a0a0; font-size: 13px; }
+      .help { display: none; margin: -4px 0 10px; }
+      .help.show { display: block; }
+      .help button { width: 100%; }
       .row { display: flex; gap: 6px; align-items: center; }
       button {
         flex: 1; appearance: none; cursor: pointer;
@@ -108,6 +146,7 @@ if (!window.__clarkReaderInjected) {
       <div class="head">
         <span class="dot"></span><span class="label">ClarkReader</span>
         <span class="wpm"></span><span class="count"></span>
+        <button class="size" title="Maximize (Alt+M)">&#x2922;</button>
       </div>
       <div class="rsvp">
         <div class="guide top"></div>
@@ -116,6 +155,7 @@ if (!window.__clarkReaderInjected) {
         <div class="bar"><div></div></div>
       </div>
       <div class="text"></div>
+      <div class="help"><button class="helpBtn">Open the setup guide</button></div>
       <div class="row">
         <button class="prev"  title="Previous sentence">&#9668;&#9668;</button>
         <button class="primary toggle" title="Pause or resume (Alt+P)">Pause</button>
@@ -130,6 +170,7 @@ if (!window.__clarkReaderInjected) {
     label: root.querySelector(".label"),
     wpm: root.querySelector(".wpm"),
     count: root.querySelector(".count"),
+    size: root.querySelector(".size"),
     rsvp: root.querySelector(".rsvp"),
     word: root.querySelector(".word"),
     left: root.querySelector(".word .l"),
@@ -137,6 +178,8 @@ if (!window.__clarkReaderInjected) {
     right: root.querySelector(".word .r"),
     bar: root.querySelector(".bar > div"),
     text: root.querySelector(".text"),
+    help: root.querySelector(".help"),
+    helpBtn: root.querySelector(".helpBtn"),
     prev: root.querySelector(".prev"),
     next: root.querySelector(".next"),
     toggle: root.querySelector(".toggle"),
@@ -162,6 +205,47 @@ if (!window.__clarkReaderInjected) {
   function setControlsEnabled(on) {
     for (const b of [el.prev, el.next, el.toggle, el.stop]) b.disabled = !on;
   }
+
+  // ------------------------------------------------------------- maximize
+
+  let maximized = false;
+
+  function applySize() {
+    el.card.classList.toggle("max", maximized);
+    el.size.textContent = maximized ? "\u2923" : "\u2922";
+    el.size.title = maximized ? "Restore (Esc)" : "Maximize (Alt+M)";
+  }
+
+  function setMaximized(on, { persist = true } = {}) {
+    maximized = Boolean(on);
+    applySize();
+    // Remembered across reads, in the same store as the popup's settings. Content
+    // scripts get chrome.storage directly; the guard is for the test sandbox.
+    if (persist) {
+      try {
+        api.storage?.sync?.set({ maximized });
+      } catch {
+        /* storage unavailable; the choice lasts for this page only */
+      }
+    }
+  }
+
+  try {
+    api.storage?.sync?.get({ maximized: false })
+      ?.then?.((v) => setMaximized(v.maximized, { persist: false }));
+  } catch {
+    /* as above */
+  }
+
+  el.size.addEventListener("click", () => setMaximized(!maximized));
+  // Escape restores the small card, but only while it is actually up: a full-screen
+  // reader must not swallow the page's own Escape when it is hidden.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && maximized && el.card.classList.contains("show")) {
+      setMaximized(false);
+      e.stopPropagation();
+    }
+  }, true);
 
   // ------------------------------------------------------------------ RSVP
 
@@ -257,13 +341,20 @@ if (!window.__clarkReaderInjected) {
   el.next.addEventListener("click", () => send("next"));
   el.stop.addEventListener("click", () => send("stop"));
   el.toggle.addEventListener("click", () => send("toggle"));
+  el.helpBtn.addEventListener("click", () => api.runtime.sendMessage({ type: "cr-open-help" }));
 
   api.runtime.onMessage.addListener((msg) => {
     if (!msg?.type?.startsWith("cr-")) return;
 
+    if (msg.type === "cr-toggle-max") {
+      setMaximized(!maximized);
+      return;
+    }
+
     if (msg.type === "cr-status" && msg.state === "preparing") {
       stopClock();
       clearWord();
+      el.help.className = "help";
       el.dot.className = "dot";
       el.label.textContent = "ClarkReader";
       el.count.textContent = "";
@@ -277,8 +368,10 @@ if (!window.__clarkReaderInjected) {
     if (msg.type === "cr-start") {
       total = msg.count;
       el.rsvp.hidden = msg.rsvp === false;
-      el.label.textContent = msg.voice === "bf_emma" ? "Emma" : msg.voice;
-      el.count.textContent = `1 / ${total}`;
+      const voice = msg.voice === "bf_emma" ? "Emma" : msg.voice;
+      // A whole document names itself in the header; a selection is just the voice.
+      el.label.textContent = msg.title ? `${voice} · ${msg.title}` : voice;
+      el.count.textContent = `${(msg.from ?? 0) + 1} / ${total}`;
       setControlsEnabled(true);
       show();
       return;
@@ -315,6 +408,7 @@ if (!window.__clarkReaderInjected) {
     if (msg.type === "cr-error") {
       stopClock();
       clearWord();
+      el.help.className = msg.help ? "help show" : "help";
       el.dot.className = "dot error";
       el.label.textContent = "ClarkReader";
       el.count.textContent = "";
@@ -322,7 +416,8 @@ if (!window.__clarkReaderInjected) {
       el.text.textContent = msg.message;
       setControlsEnabled(false);
       show();
-      hideSoon(6000);
+      // An error with a way forward stays up long enough to take it.
+      hideSoon(msg.help ? 20000 : 6000);
     }
   });
 }
