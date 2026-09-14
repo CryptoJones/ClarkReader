@@ -5,6 +5,7 @@ in sync. Every open item below gets a matching GitHub issue when the repo is pub
 
 ## Open
 
+- [ ] **Stop audio when the tab being read is closed** — _fix_ — playback runs in the background context (Firefox background page / Chrome offscreen document), not the tab, so closing the tab mid-read leaves the voice playing with no tab to reach it. Track the requesting `tabId` on the job and halt it on `tabs.onRemoved` (and the content-script port `onDisconnect`), while a same-page navigation still resumes as today. ([#15](https://github.com/CryptoJones/ClarkReader/issues/15))
 - [ ] **Highlight the sentence being read** — _feat_ — the player already knows the active chunk index; map chunks back to Range offsets in the original selection and paint them in the page.
 - [ ] **Read PDFs** — _feat_ — Chrome's viewer refuses injection; fetch the file (activeTab grants the origin), extract text page by page with a vendored pdf.js in the offscreen document, and stream pages to `/prepare` as they come. Scanned PDFs have no text layer and would need OCR, which is out of scope.
 - [ ] **Chatterbox backend behind the same endpoints** — _feat_ — contained to the `Engine` class; needs the carrier-phrase fix for short chunks before it is usable here (79% misread at one word).
