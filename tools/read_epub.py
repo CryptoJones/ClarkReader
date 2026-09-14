@@ -214,8 +214,12 @@ def nav_html(prev: Chapter | None, nxt: Chapter | None, here_dir: str, index_hre
         rel = posixpath.relpath(ch.href, here_dir or ".")
         return f'<a href="{html.escape(rel)}">{label}</a>'
     idx = posixpath.relpath(index_href, here_dir or ".")
-    return (f'{NAV_CSS}\n<nav class="clark-nav">{link(prev, "&larr; Previous")}'
-            f'<a href="{html.escape(idx)}">Contents</a>{link(nxt, "Next &rarr;")}</nav>')
+    # Numeric character references, not named ones: the nav is injected into the
+    # book's own .xhtml chapter files, which Firefox parses as strict XML where
+    # &larr;/&rarr; are undefined entities (a fatal parse error). Chrome is lenient
+    # and accepted them; Firefox does not. &#8592; / &#8594; are valid in both.
+    return (f'{NAV_CSS}\n<nav class="clark-nav">{link(prev, "&#8592; Previous")}'
+            f'<a href="{html.escape(idx)}">Contents</a>{link(nxt, "Next &#8594;")}</nav>')
 
 
 def unpack(epub: Path, out: Path) -> tuple[Book, Path]:
