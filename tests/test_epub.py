@@ -90,9 +90,20 @@ def test_chapters_get_navigation(epub, tmp_path):
     ch1 = (tmp_path / "out/OEBPS/Text/ch1.xhtml").read_text()
     ch2 = (tmp_path / "out/OEBPS/Text/ch2.xhtml").read_text()
     assert 'href="ch2.xhtml">Next' in ch1 and "Previous" not in ch1.split("clark-nav")[1].split("</nav>")[0].replace("<span></span>", "")
-    assert 'href="ch1.xhtml">&larr; Previous' in ch2
+    assert 'href="ch1.xhtml">&#8592; Previous' in ch2
     assert 'href="../index.html">Contents' in ch1
     assert ch1.count("</body>") == 1, "the nav goes inside the body"
+
+
+def test_nav_uses_xml_safe_entities(epub, tmp_path):
+    # The nav is injected into the book's own .xhtml chapters, which Firefox parses
+    # as strict XML. Named entities like &larr;/&rarr; are undefined there and abort
+    # the parse; every generated chapter must stay well-formed XML.
+    import xml.dom.minidom as minidom
+
+    read_epub.unpack(epub, tmp_path / "out")
+    for xhtml in (tmp_path / "out").rglob("*.xhtml"):
+        minidom.parseString(xhtml.read_bytes())
 
 
 def test_whole_book_relocates_paths_and_drops_scripts(epub, tmp_path):
