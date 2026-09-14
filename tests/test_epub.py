@@ -44,7 +44,7 @@ NCX = """<?xml version="1.0"?>
 </ncx>"""
 
 CH1 = """<html xmlns="http://www.w3.org/1999/xhtml"><head><title>1</title></head>
-<body><h1>Chapter One</h1><p>First words.</p><img src="../Images/fig.png"/><script>evil()</script></body></html>"""
+<body><h1>Chapter One</h1><p>First words.</p><figure><img src="../Images/fig.png"/></figure><script>evil()</script></body></html>"""
 CH2 = """<html xmlns="http://www.w3.org/1999/xhtml"><head><title>2</title></head>
 <body><h2>Chapter &amp; Two</h2><p>Second words.</p></body></html>"""
 NOTES = "<html><body><p>Not in the reading order.</p></body></html>"
@@ -104,6 +104,17 @@ def test_nav_uses_xml_safe_entities(epub, tmp_path):
     read_epub.unpack(epub, tmp_path / "out")
     for xhtml in (tmp_path / "out").rglob("*.xhtml"):
         minidom.parseString(xhtml.read_bytes())
+
+
+def test_figure_images_are_enlarged(epub, tmp_path):
+    # EPUB figures render at their small intrinsic size; the converter injects CSS
+    # that grows figure images toward a legible width. Present on chapter pages and
+    # once on the whole-book page, and it must not upscale to a fixed blurry size.
+    read_epub.unpack(epub, tmp_path / "out")
+    ch1 = (tmp_path / "out/OEBPS/Text/ch1.xhtml").read_text()
+    book = (tmp_path / "out/OEBPS/book.html").read_text()
+    assert "min-width:min(100%,640px)" in ch1
+    assert book.count("min-width:min(100%,640px)") == 1, "one image rule on the one-page book"
 
 
 def test_whole_book_relocates_paths_and_drops_scripts(epub, tmp_path):
