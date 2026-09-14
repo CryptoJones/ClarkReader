@@ -48,6 +48,18 @@ NAV_CSS = """
   .clark-nav a { color:inherit; text-decoration:none; opacity:.7 } .clark-nav a:hover { opacity:1 }
 </style>"""
 
+# EPUB figures are usually drawn at a small intrinsic size with width:auto, so they
+# look tiny in a wide window; the EPUB's own click-to-zoom is JavaScript, which this
+# converter strips. Grow figure images toward a legible width, centred, while keeping
+# them inside the reading column and responsive on a narrow screen. Scoped to <figure>
+# so inline text glyphs are untouched. Kept XML-safe (no <, >, & ) for .xhtml chapters.
+IMG_RULES = (
+    "figure{max-width:100%}"
+    "figure img,figure svg,figure image{display:block;margin-left:auto;margin-right:auto;"
+    "height:auto;width:auto;min-width:min(100%,640px);max-width:100%}"
+)
+IMG_CSS = f"\n<style>\n  {IMG_RULES}\n</style>"
+
 
 @dataclass
 class Chapter:
@@ -250,8 +262,9 @@ def unpack(epub: Path, out: Path) -> tuple[Book, Path]:
         prev = book.chapters[i - 1] if i > 0 else None
         nxt = book.chapters[i + 1] if i + 1 < len(book.chapters) else None
         nav = nav_html(prev, nxt, posixpath.dirname(ch.href), index_href)
-        text = re.sub(r"</body>", lambda m: nav + "\n</body>", text, count=1, flags=re.I) \
-            if re.search(r"</body>", text, re.I) else text + nav
+        add = nav + IMG_CSS
+        text = re.sub(r"</body>", lambda m: add + "\n</body>", text, count=1, flags=re.I) \
+            if re.search(r"</body>", text, re.I) else text + add
         path.write_text(text, encoding="utf-8")
 
     # The whole book on one page, every chapter's body in spine order.
@@ -263,14 +276,14 @@ def unpack(epub: Path, out: Path) -> tuple[Book, Path]:
             continue
         fragment = relocate(body_of(doc), posixpath.dirname(ch.href), book.opf_dir)
         fragment = re.sub(r"<nav class=\"clark-nav\">.*?</nav>", "", fragment, flags=re.S)
-        fragment = fragment.replace(NAV_CSS, "")
+        fragment = fragment.replace(NAV_CSS, "").replace(IMG_CSS, "")
         parts.append(f'<section class="clark-chapter" id="ch{ch.order}">\n{fragment}\n</section>')
     heading = html.escape(book.title) + (f" — {html.escape(book.author)}" if book.author else "")
     (out / book_href).write_text(
         "<!doctype html>\n<meta charset=\"utf-8\">\n"
         f"<title>{html.escape(book.title)}</title>\n"
         "<style>body{max-width:42em;margin:2em auto;padding:0 1em;font:18px/1.6 Georgia,serif}"
-        ".clark-chapter{margin-bottom:4em}</style>\n"
+        ".clark-chapter{margin-bottom:4em}" + IMG_RULES + "</style>\n"
         f"<h1>{heading}</h1>\n" + "\n".join(parts) + "\n", encoding="utf-8")
 
     # The contents page.
