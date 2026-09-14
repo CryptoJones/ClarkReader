@@ -305,6 +305,17 @@ async function control(action) {
   await toPlayer({ type: "control", action });
 }
 
+// Playback lives in the offscreen document (Chrome) or the background page (Firefox),
+// not in the tab, so closing the tab that started a read would otherwise leave the
+// audio going with nothing left to control it. Stop that read when its tab closes; a
+// whole-document bookmark is kept, exactly as with any other stop, so it can resume.
+// Only a close fires onRemoved — a same-page navigation does not — so an ongoing read
+// still survives navigation as before.
+api.tabs.onRemoved.addListener(async (tabId) => {
+  await loadState();
+  if (state.tabId === tabId && state.jobId) await control("stop");
+});
+
 // ---------------------------------------------------------------------- routing
 
 /** Player progress, however it arrived — by message from Chrome's offscreen document

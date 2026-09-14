@@ -69,6 +69,7 @@ function makeStubs({ offscreen, selection = "Selected text." }) {
       query: async () => [{ id: 7 }],
       sendMessage: async (tabId, m) => { calls.toTab.push({ tabId, ...m }); },
       create: async (o) => { calls.opened = [...(calls.opened ?? []), o.url]; },
+      onRemoved: on("removed"),
     },
     scripting: {
       // Two functions get injected: the selection reader and the page extractor.
@@ -193,6 +194,25 @@ test("Chrome hands playback to the offscreen document instead", async () => {
   assert.equal(play.target, "offscreen");
   assert.ok(!calls.fetches.some((f) => f.url.includes("/chunk/")),
     "the service worker must not decode audio itself");
+});
+
+test("closing the reading tab stops the audio; closing another tab does not", async () => {
+  const { calls, listeners } = loadBackground("chrome");
+  await listeners.command("read-selection");   // the active tab is id 7
+  await settle();
+  assert.ok(calls.sent.some((m) => m.type === "play"), "a read should be playing");
+
+  // An unrelated tab closing must leave the read alone.
+  await listeners.removed(999);
+  await settle();
+  assert.ok(!calls.sent.some((m) => m.type === "control" && m.action === "stop"),
+    "closing a different tab must not stop playback");
+
+  // The tab that started the read closing must stop it (offscreen audio has no tab).
+  await listeners.removed(7);
+  await settle();
+  assert.ok(calls.sent.some((m) => m.type === "control" && m.action === "stop"),
+    "closing the reading tab must stop playback");
 });
 
 test("a stopped server is reported, not thrown", async () => {
