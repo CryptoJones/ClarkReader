@@ -35,24 +35,25 @@
   <p class="note">The voice is synthesized on your own machine by a small local server. Nothing you read is sent anywhere. That server has to be installed and running before the extension can do anything, so this page is the one step that matters.</p>
 
   <h2>1. Install the server (once)</h2>
-  <p>You need Python 3.10, 3.11 or 3.12 (Kokoro does not install on 3.13 or newer yet), Git, and about 2 GB of disk for the model.</p>
+  <p>You need Git and about 2 GB of disk for the model. The setup script finds a Python Kokoro supports (3.10, 3.11 or 3.12; it does not install on 3.13 or newer) and on Linux and macOS can fetch one for you if there is none.</p>
 
   <p><strong>Linux / macOS</strong> — in a terminal:</p>
 <pre>git clone https://github.com/CryptoJones/ClarkReader.git
 cd ClarkReader
-python3 -m venv .venv &amp;&amp; .venv/bin/pip install -r server/requirements.txt
-server/run.sh</pre>
+./install.sh</pre>
+  <p><code>install.sh</code> builds a virtual environment, installs the server, builds the extension into <code>dist/</code>, and starts the server at every login: a systemd user service on Linux, a launchd agent on macOS. If there is no Python 3.10 to 3.12 it offers to install <a href="https://astral.sh/uv">uv</a> into <code>~/.local/bin</code> to fetch one. Run it again any time; <code>./install.sh --no-autostart</code> removes the login service.</p>
 
   <p><strong>Windows</strong> — install <a href="https://www.python.org/downloads/windows/">Python 3.12</a> (tick <em>Add python.exe to PATH</em>) and <a href="https://git-scm.com/download/win">Git</a>, then in PowerShell:</p>
 <pre>git clone https://github.com/CryptoJones/ClarkReader.git C:\ClarkReader
 cd C:\ClarkReader
-py -3.12 -m venv .venv
-.venv\Scripts\pip install -r server\requirements.txt
-.venv\Scripts\python server\clarkreader_server.py</pre>
-  <p>Windows starts the server with Python directly, because <code>run.sh</code> needs bash. <code>py -3.12</code> picks 3.12 even if a newer Python is also installed; plain <code>py -3</code> would pick the newest and fail on Kokoro. Clone somewhere with a short path such as <code>C:\ClarkReader</code>: PyTorch has deep file paths, and the install fails with a "long path" error from a deeply nested folder unless Windows long paths are enabled. The install pulls PyTorch, which is a large download. If Windows Firewall asks whether Python may accept connections, allowing private networks is enough; the server only listens on your own machine unless you point it elsewhere. Tested on Windows 11 with Python 3.12 on a CPU; if something here does not work for you, please <a href="https://github.com/CryptoJones/ClarkReader/issues">open an issue</a>.</p>
+powershell -ExecutionPolicy Bypass -File install.ps1</pre>
+  <p><code>install.ps1</code> finds a Python Kokoro supports (it does not install on 3.13 or newer, so it looks for 3.12, 3.11, then 3.10), builds a virtual environment, installs the server, builds the extension into <code>dist\</code>, adds a shortcut to your Startup folder so the server starts at every login, and starts it now. Run it again any time; <code>-NoAutoStart</code> removes the login shortcut. It is per-user and needs no admin rights.</p>
+  <p>Clone somewhere with a short path such as <code>C:\ClarkReader</code>: PyTorch has deep file paths, and the install fails with a "long path" error from a deeply nested folder unless Windows long paths are enabled. The install pulls PyTorch, which is a large download. If Windows Firewall asks whether Python may accept connections, allowing private networks is enough; the server only listens on your own machine unless you point it elsewhere. Tested on Windows 11 with Python 3.12 on a CPU; if something here does not work for you, please <a href="https://github.com/CryptoJones/ClarkReader/issues">open an issue</a>.</p>
 
-  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. The first start is slow, a couple of minutes on a CPU, because it also fetches a small language model for text handling. After that it runs fully offline. Leave the terminal window open; closing it stops the server.</p>
-  <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that, along with what hardware the server needs. The server has been tested on Linux and Windows 11; macOS has not been tried.</p>
+  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. The first start is slow, a couple of minutes on a CPU, because it also fetches a small language model for text handling. After that it runs fully offline. The setup scripts run it in the background, so there is no terminal to keep open.</p>
+  <p>The <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has what hardware the server needs and how to run it by hand. The setup was tested on Ubuntu 26.04 (under WSL), macOS 26 on Apple silicon, and Windows 11. On the Mac the extension was also confirmed working in Chrome.</p>
+
+  <p>The scripts build the extension but a browser will not load one silently. Load it once: in Chrome, <code>chrome://extensions</code> → <em>Developer mode</em> → <em>Load unpacked</em> → the <code>dist/chrome</code> folder inside the ClarkReader folder. In Firefox, <code>about:debugging#/runtime/this-firefox</code> → <em>Load Temporary Add-on</em> → <code>dist/firefox/manifest.json</code>; Firefox forgets a temporary add-on when it closes.</p>
 
   <h2>2. Check the connection</h2>
   <p>Click the ClarkReader toolbar icon. The popup shows a green dot and <em>kokoro ready</em> when the server is up. On Firefox, the first time, it will ask you to <strong>Allow access to the server</strong>; that is Firefox's opt-in for local connections and is expected.</p>

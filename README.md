@@ -42,6 +42,24 @@ popup or from any "cannot reach the server" message.
 
 ### 1. The server
 
+One script per platform does the whole setup: it finds a Python Kokoro supports,
+builds `.venv`, installs the requirements, builds the extension into `dist/`, and starts
+the server at login.
+
+```bash
+git clone https://github.com/CryptoJones/ClarkReader.git
+cd ClarkReader
+./install.sh                     # Linux and macOS
+```
+
+`install.sh` uses a systemd user service on Linux and a launchd agent on macOS. Kokoro
+installs on Python 3.10 to 3.12 only, so if none is on the machine it offers to install
+[uv](https://astral.sh/uv) into `~/.local/bin` to fetch 3.12 (set
+`CLARKREADER_INSTALL_UV=y` to say yes without a prompt). It is per-user, needs no root,
+and is safe to re-run; `./install.sh --no-autostart` removes the login service.
+
+The rest of this section is what the scripts do, for running it by hand.
+
 `run.sh` reuses [NarratorTool's](https://github.com/CryptoJones/NarratorTool) venv if it is
 on the machine, since Kokoro's dependency is torch and there is no reason to install it twice.
 
@@ -65,23 +83,26 @@ CLARKREADER_PYTHON=/path/to/venv/bin/python server/run.sh
 Kokoro installs on Python 3.10 to 3.12 only; 3.13 and newer fail to resolve it, so use one
 of those for the venv.
 
-On Windows, where `run.sh` cannot run, use PowerShell and start the server directly:
+On Windows, where `run.sh` cannot run, `install.ps1` is the equivalent:
 
 ```powershell
 git clone https://github.com/CryptoJones/ClarkReader.git C:\ClarkReader
 cd C:\ClarkReader
-py -3.12 -m venv .venv
-.venv\Scripts\pip install -r server\requirements.txt
-.venv\Scripts\python server\clarkreader_server.py
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-`py -3.12` matters if a newer Python is also installed, since `py -3` picks the newest.
-Clone to a short path: PyTorch's file paths are deep, and from a deeply nested folder the
-install fails with a "long path" error unless Windows long paths are enabled. The first
-start takes a couple of minutes on a CPU, because besides the model it downloads a small
-spaCy language model.
+`install.ps1` finds Python 3.12, 3.11 or 3.10 (`py -3` would pick the newest, and Kokoro
+does not install on 3.13+), builds `.venv`, installs the requirements, builds the
+extension into `dist\` (`build.ps1`, the Windows counterpart of `build.sh`), puts a
+shortcut in your Startup folder so the server starts at login, and starts it now.
+It is per-user, needs no admin rights, and is safe to re-run; `-NoAutoStart` removes the
+shortcut. Clone to a short path: PyTorch's file paths are deep, and from a deeply nested
+folder the install fails with a "long path" error unless Windows long paths are enabled.
+The first start takes a couple of minutes on a CPU, because besides the model it
+downloads a small spaCy language model.
 
-To keep it warm across reboots on Linux, there is a user unit:
+To keep it warm across reboots on Linux without `install.sh`, there is a user unit
+(edit the `ExecStart` path in it to match where you cloned the repo):
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -106,18 +127,25 @@ Both are faster than real time, and the server synthesizes ahead of playback a s
 at a time, so a CPU is enough to keep the voice going. The GPU mostly shortens the pause
 before the first sentence and after a skip. The model takes about 2 GB of disk.
 
-Linux is the only platform both extension builds have been tested on. The server has
-also been run on Windows 11 with Python 3.12 on a CPU (install, `/health`, and audio from
-`/chunk` all worked), started as shown above because `run.sh` needs bash and the systemd
-unit is Linux-only. The Windows browser side is untested. macOS runs the same Python,
-PyTorch and Kokoro, so the server should work there the same way, but nobody has tried it
-yet. Reports welcome.
+What has been tested, all on CPU with Python 3.12, using the install scripts above:
+
+| Platform | Server and install script | Extension |
+|---|---|---|
+| Linux (Ubuntu 26.04 under WSL) | install, systemd service, audio from `/chunk` | not tried in a browser |
+| macOS 26, Apple silicon | install (uv fetched Python), launchd agent, audio from `/chunk` | works in Chrome |
+| Windows 11 | install, login shortcut, `/health` | not tried in a browser |
+
+Firefox on macOS and Windows, and other distributions, are untried. Reports welcome.
 
 ### 2. The extension
 
 ```bash
 ./build.sh          # -> dist/chrome and dist/firefox
 ```
+
+The install scripts already ran this. On Windows, to rebuild alone, run
+`powershell -ExecutionPolicy Bypass -File build.ps1`. The store zips need `zip`; without
+it `build.sh` skips them and the unpacked directories are unaffected.
 
 **Chrome** — `chrome://extensions` → **Developer mode** → **Load unpacked** → `dist/chrome`
 

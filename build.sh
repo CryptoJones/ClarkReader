@@ -16,7 +16,8 @@ for browser in chrome firefox; do
   dest="$out/$browser"
   mkdir -p "$dest"
   # Everything but the manifests, then the right manifest as manifest.json.
-  (cd "$src" && find . -type f ! -name 'manifest*.json' -exec cp --parents {} "$dest/" \;)
+  # tar rather than `cp --parents`, which is GNU-only and fails on macOS.
+  (cd "$src" && tar -cf - --exclude='manifest*.json' .) | (cd "$dest" && tar -xf -)
   if [[ "$browser" == chrome ]]; then
     cp "$src/manifest.json" "$dest/manifest.json"
   else
@@ -27,8 +28,13 @@ for browser in chrome firefox; do
   # which is what both stores' upload forms expect. Named by the manifest version
   # so a release's assets and its tag cannot disagree.
   version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$dest/manifest.json")"
-  (cd "$dest" && zip -qr "$out/clarkreader-$version-$browser.zip" .)
-  echo "packed $out/clarkreader-$version-$browser.zip"
+  # zip is only needed for the store upload; loading the directory does not need it.
+  if command -v zip >/dev/null 2>&1; then
+    (cd "$dest" && zip -qr "$out/clarkreader-$version-$browser.zip" .)
+    echo "packed $out/clarkreader-$version-$browser.zip"
+  else
+    echo "zip not installed; skipped the store package for $browser"
+  fi
 done
 
 cat <<'MSG'
