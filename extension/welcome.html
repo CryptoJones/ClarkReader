@@ -35,7 +35,7 @@
   <p class="note">The voice is synthesized on your own machine by a small local server. Nothing you read is sent anywhere. That server has to be installed and running before the extension can do anything, so this page is the one step that matters.</p>
 
   <h2>1. Install the server (once)</h2>
-  <p>You need Python 3.10 or newer, Git, and about 2 GB of disk for the model.</p>
+  <p>You need Python 3.10, 3.11 or 3.12 (Kokoro does not install on 3.13 or newer yet), Git, and about 2 GB of disk for the model.</p>
 
   <p><strong>Linux / macOS</strong> — in a terminal:</p>
 <pre>git clone https://github.com/CryptoJones/ClarkReader.git
@@ -43,16 +43,16 @@ cd ClarkReader
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install -r server/requirements.txt
 server/run.sh</pre>
 
-  <p><strong>Windows</strong> — install <a href="https://www.python.org/downloads/windows/">Python</a> (tick <em>Add python.exe to PATH</em>) and <a href="https://git-scm.com/download/win">Git</a>, then in PowerShell:</p>
-<pre>git clone https://github.com/CryptoJones/ClarkReader.git
-cd ClarkReader
-py -3 -m venv .venv
+  <p><strong>Windows</strong> — install <a href="https://www.python.org/downloads/windows/">Python 3.12</a> (tick <em>Add python.exe to PATH</em>) and <a href="https://git-scm.com/download/win">Git</a>, then in PowerShell:</p>
+<pre>git clone https://github.com/CryptoJones/ClarkReader.git C:\ClarkReader
+cd C:\ClarkReader
+py -3.12 -m venv .venv
 .venv\Scripts\pip install -r server\requirements.txt
 .venv\Scripts\python server\clarkreader_server.py</pre>
-  <p>Windows starts the server with Python directly, because <code>run.sh</code> needs bash. The install pulls PyTorch, which is a large download. If Windows Firewall asks whether Python may accept connections, allowing private networks is enough; the server only listens on your own machine unless you point it elsewhere. Windows has not been tested yet, so if something here does not work, please <a href="https://github.com/CryptoJones/ClarkReader/issues">open an issue</a>.</p>
+  <p>Windows starts the server with Python directly, because <code>run.sh</code> needs bash. <code>py -3.12</code> picks 3.12 even if a newer Python is also installed; plain <code>py -3</code> would pick the newest and fail on Kokoro. Clone somewhere with a short path such as <code>C:\ClarkReader</code>: PyTorch has deep file paths, and the install fails with a "long path" error from a deeply nested folder unless Windows long paths are enabled. The install pulls PyTorch, which is a large download. If Windows Firewall asks whether Python may accept connections, allowing private networks is enough; the server only listens on your own machine unless you point it elsewhere. Tested on Windows 11 with Python 3.12 on a CPU; if something here does not work for you, please <a href="https://github.com/CryptoJones/ClarkReader/issues">open an issue</a>.</p>
 
-  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. After that it runs fully offline. Leave the terminal window open; closing it stops the server.</p>
-  <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that, along with what hardware the server needs. Linux is the only platform it has been tested on so far.</p>
+  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. The first start is slow, a couple of minutes on a CPU, because it also fetches a small language model for text handling. After that it runs fully offline. Leave the terminal window open; closing it stops the server.</p>
+  <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that, along with what hardware the server needs. The server has been tested on Linux and Windows 11; macOS has not been tried.</p>
 
   <h2>2. Check the connection</h2>
   <p>Click the ClarkReader toolbar icon. The popup shows a green dot and <em>kokoro ready</em> when the server is up. On Firefox, the first time, it will ask you to <strong>Allow access to the server</strong>; that is Firefox's opt-in for local connections and is expected.</p>
