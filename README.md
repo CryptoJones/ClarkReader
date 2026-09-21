@@ -62,7 +62,15 @@ Or point it at any Python that has `kokoro`:
 CLARKREADER_PYTHON=/path/to/venv/bin/python server/run.sh
 ```
 
-To keep it warm across reboots, there is a user unit:
+On Windows, where `run.sh` cannot run, use PowerShell and start the server directly:
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\pip install -r server\requirements.txt
+.venv\Scripts\python server\clarkreader_server.py
+```
+
+To keep it warm across reboots on Linux, there is a user unit:
 
 ```bash
 mkdir -p ~/.config/systemd/user

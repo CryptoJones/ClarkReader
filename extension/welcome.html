@@ -35,12 +35,23 @@
   <p class="note">The voice is synthesized on your own machine by a small local server. Nothing you read is sent anywhere. That server has to be installed and running before the extension can do anything, so this page is the one step that matters.</p>
 
   <h2>1. Install the server (once)</h2>
-  <p>You need Python 3.10 or newer and about 2 GB of disk for the model. In a terminal:</p>
+  <p>You need Python 3.10 or newer, Git, and about 2 GB of disk for the model.</p>
+
+  <p><strong>Linux / macOS</strong> — in a terminal:</p>
 <pre>git clone https://github.com/CryptoJones/ClarkReader.git
 cd ClarkReader
 python3 -m venv .venv &amp;&amp; .venv/bin/pip install -r server/requirements.txt
 server/run.sh</pre>
-  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. After that it runs fully offline.</p>
+
+  <p><strong>Windows</strong> — install <a href="https://www.python.org/downloads/windows/">Python</a> (tick <em>Add python.exe to PATH</em>) and <a href="https://git-scm.com/download/win">Git</a>, then in PowerShell:</p>
+<pre>git clone https://github.com/CryptoJones/ClarkReader.git
+cd ClarkReader
+py -3 -m venv .venv
+.venv\Scripts\pip install -r server\requirements.txt
+.venv\Scripts\python server\clarkreader_server.py</pre>
+  <p>Windows starts the server with Python directly, because <code>run.sh</code> needs bash. The install pulls PyTorch, which is a large download. If Windows Firewall asks whether Python may accept connections, allowing private networks is enough; the server only listens on your own machine unless you point it elsewhere. Windows has not been tested yet, so if something here does not work, please <a href="https://github.com/CryptoJones/ClarkReader/issues">open an issue</a>.</p>
+
+  <p>The first start downloads the Kokoro model and the Emma voice, then says it is listening on <code>http://127.0.0.1:8756</code>. After that it runs fully offline. Leave the terminal window open; closing it stops the server.</p>
   <p>To keep it running across reboots on Linux there is a user service; the <a href="https://github.com/CryptoJones/ClarkReader#readme">README</a> has that, along with what hardware the server needs. Linux is the only platform it has been tested on so far.</p>
 
   <h2>2. Check the connection</h2>
