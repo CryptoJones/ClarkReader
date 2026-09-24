@@ -495,11 +495,19 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=DEFAULT_SPEED)
     ap.add_argument("--no-warmup", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--log-file", help="also append the log to this file")
     args = ap.parse_args()
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    if args.log_file:
+        # A log file outlives the day, so its lines carry the date too.
+        os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
+        fh = logging.FileHandler(args.log_file, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s",
+                                          "%Y-%m-%d %H:%M:%S"))
+        logging.getLogger().addHandler(fh)
 
     if prefer_offline(args.voice):
         log.info("model and voice are cached - running fully offline")

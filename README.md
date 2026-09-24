@@ -93,10 +93,12 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 `install.ps1` finds Python 3.12, 3.11 or 3.10 (`py -3` would pick the newest, and Kokoro
 does not install on 3.13+), builds `.venv`, installs the requirements, builds the
-extension into `dist\` (`build.ps1`, the Windows counterpart of `build.sh`), puts a
-shortcut in your Startup folder so the server starts at login, and starts it now.
-It is per-user, needs no admin rights, and is safe to re-run; `-NoAutoStart` removes the
-shortcut. Clone to a short path: PyTorch's file paths are deep, and from a deeply nested
+extension into `dist\` (`build.ps1`, the Windows counterpart of `build.sh`), registers
+a scheduled task (`ClarkReaderServer`) that runs the server in the background at login
+with no window and restarts it if it crashes, and starts it now. The log is
+`%LOCALAPPDATA%\ClarkReader\server.log`. It is per-user, needs no admin rights, and is
+safe to re-run; `-NoAutoStart` removes the task. It pins spaCy to 3.8.7 on Windows:
+Smart App Control blocks the newer 3.8.16 build's compiled modules. Clone to a short path: PyTorch's file paths are deep, and from a deeply nested
 folder the install fails with a "long path" error unless Windows long paths are enabled.
 The first start takes a couple of minutes on a CPU, because besides the model it
 downloads a small spaCy language model.
@@ -133,7 +135,7 @@ What has been tested, all on CPU with Python 3.12, using the install scripts abo
 |---|---|---|
 | Linux (Ubuntu 26.04 under WSL) | install, systemd service, audio from `/chunk` | not tried in a browser |
 | macOS 26, Apple silicon | install (uv fetched Python), launchd agent, audio from `/chunk` | works in Chrome |
-| Windows 11 | install, login shortcut, `/health` | not tried in a browser |
+| Windows 11 (Smart App Control on) | install, background scheduled task, `/health` | not tried in a browser |
 
 Firefox on macOS and Windows, and other distributions, are untried. Reports welcome.
 
