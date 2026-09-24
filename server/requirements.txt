@@ -3,3 +3,7 @@
 kokoro>=0.9.4
 torch>=2.0
 numpy>=1.24
+# Pulled in by misaki (Kokoro's phonemizer). Windows Smart App Control blocks
+# spaCy 3.8.16's freshly built .pyd files ("An Application Control policy has
+# blocked this file"); 3.8.7's are established and load.
+spacy==3.8.7; sys_platform == "win32"
